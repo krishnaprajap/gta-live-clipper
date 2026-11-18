@@ -128,8 +128,10 @@ icacls $EnvFile /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null
 # ---------------------------------------------------------------- Whisper model
 Step "Downloading Whisper model '$model' (one time, stored in $DataDirFwd/hf)"
 $env:HF_HOME = "$DataDirFwd/hf"
-& $VenvPy -c "from faster_whisper import WhisperModel; WhisperModel('$model', device='cpu', compute_type='int8'); print('model ready')"
-if ($LASTEXITCODE -ne 0) { Write-Warning "Whisper model download failed; clips will be made without captions until it succeeds." }
+& $VenvPy -m clipper whisper repair --model $model
+if ($LASTEXITCODE -ne 0) {
+    throw "Whisper model download incomplete. Check your internet connection, then run: powershell -ExecutionPolicy Bypass -File scripts\windows\verify-whisper.ps1"
+}
 
 # ---------------------------------------------------------------- checks
 Step "Pre-flight check"
@@ -155,5 +157,6 @@ if (-not $NoAutostart) {
 Write-Host "`nDone." -ForegroundColor Green
 Write-Host "Dashboard : http://127.0.0.1:8080   (user: anything, password: DASHBOARD_TOKEN in .env)"
 Write-Host "Show password : Select-String -Path `"$EnvFile`" -Pattern '^DASHBOARD_TOKEN='"
-Write-Host "Next: edit config\config.yaml (Twitch login, authorized: true) and add TWITCH_CLIENT_ID/SECRET to .env,"
-Write-Host "      then run scripts\windows\restart.ps1"
+Write-Host "Next: 1) scripts\windows\verify-whisper.ps1        (proves captions work)"
+Write-Host "      2) edit config\config.yaml (Twitch login, authorized: true)"
+Write-Host "      3) scripts\windows\set-twitch-credentials.ps1  (stores Client ID/Secret in .env, verifies, restarts)"

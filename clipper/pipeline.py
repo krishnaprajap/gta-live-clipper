@@ -115,8 +115,10 @@ class ClipProcessor:
                 db.update("clips", clip_id, status="duplicate", error=dup)
                 return {"status": "duplicate", "reason": dup}
 
-            # transcription (optional; failures don't block the clip)
-            transcript, srt = "", None
+            # transcription: never skipped silently. If Whisper fails the clip is
+            # still edited (without captions) but marked caption_failed, logged as
+            # an error and held back from publishing until it is reviewed.
+            transcript, srt, caption_error = "", None, None
             if self.transcriber:
                 db.update("clips", clip_id, status="transcribing")
                 try:
@@ -124,10 +126,13 @@ class ClipProcessor:
                     transcript = " ".join(w.text for w in words)
                     if words:
                         srt = write_srt(chunk_words(words), raw.with_suffix(".srt"))
+                    else:
+                        db.log("info", "transcribe", f"clip {clip_id}: no speech detected (no captions needed)")
                     steps["transcription"] = {"words": len(words), "language": lang}
-                except TranscriptionUnavailable as e:
+                except Exception as e:  # model missing/corrupt, decode error, out of memory...
+                    caption_error = f"captions failed: {e}"[:500]
                     steps["transcription"] = {"error": str(e)}
-                    db.log("warning", "transcribe", str(e))
+                    db.log("error", "transcribe", f"clip {clip_id}: {caption_error}. Fix: python -m clipper whisper repair")
 
             db.update("clips", clip_id, status="editing", transcript=transcript, srt_path=str(srt) if srt else None)
             ecfg = self.cfg["edit"]
@@ -142,6 +147,12 @@ class ClipProcessor:
             db.update("clips", clip_id, vertical_path=str(vertical), title=meta.title, description=meta.description,
                       tags=json.dumps(meta.tags), status="ready")
             steps["metadata"] = meta.source
+            if caption_error and self.cfg["transcription"].get("required", True):
+                db.update("clips", clip_id, status="caption_failed", error=caption_error)
+                db.execute("INSERT INTO publish_jobs(clip_id,target,status,error,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                           (clip_id, self.publisher.name, "held", caption_error, time.time(), time.time()))
+                steps["publish"] = {"status": "held", "reason": caption_error}
+                return {"status": "caption_failed", **steps}
             steps["publish"] = self.publish(clip_id, vertical, meta.as_dict())
             return {"status": "done", **steps}
         except Exception as e:  # keep the worker alive; record the error

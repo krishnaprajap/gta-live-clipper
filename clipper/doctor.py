@@ -72,6 +72,12 @@ def run_doctor(cfg: Config) -> int:
     except Exception as e:
         line("FAIL", "faster-whisper", str(e))
         bad += 1
+    if cfg["transcription"]["enabled"]:
+        from .whisper_model import status as wstatus
+        st = wstatus(cfg["transcription"]["model"], check_remote=False)
+        line("OK" if not st["problems"] else "FAIL", f"whisper model '{cfg['transcription']['model']}'",
+             "complete" if not st["problems"] else "; ".join(st["problems"]) + " -> python -m clipper whisper repair")
+        bad += 1 if st["problems"] else 0
 
     print("== config ==")
     auth = [f"{c['platform']}:{c['channel']}" for c in cfg["authorized_channels"] if c.get("authorized")]

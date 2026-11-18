@@ -38,6 +38,18 @@ def main(argv=None) -> None:
     sv.add_argument("--channel-id", default="")
     sv.add_argument("--log-file", help="also log to this file (rotating, 3 x 10 MB)")
     sub.add_parser("doctor", help="check environment variables, binaries and config (prints no secret values)")
+    wh = sub.add_parser("whisper", help="Whisper model: status | repair [--clean] | verify")
+    wh.add_argument("action", choices=["status", "repair", "verify"])
+    wh.add_argument("--model", help="default: transcription.model from config")
+    wh.add_argument("--clean", action="store_true", help="repair: delete the model and download it from scratch")
+    wh.add_argument("--deep", action="store_true", help="status: also verify SHA-256 of every file (slow)")
+    wh.add_argument("--media", help="verify: audio/video file with speech")
+    wh.add_argument("--expect-file", help="verify: text file with what is said in --media")
+    wh.add_argument("--latest-clip", action="store_true", help="verify: check the newest clip has captions")
+    tc = sub.add_parser("twitch-check", help="verify Twitch credentials, GTA VI category, channels (read-only)")
+    tc.add_argument("--chat", type=int, default=0, help="also read chat of the first channel for N seconds")
+    cr = sub.add_parser("credentials", help="enter credentials into .env without showing them")
+    cr.add_argument("service", choices=["twitch"])
     sub.add_parser("cleanup")
     args = ap.parse_args(argv)
     handlers: list[logging.Handler] = []
@@ -91,6 +103,15 @@ def main(argv=None) -> None:
         initial = [StreamSpec("twitch", args.twitch.lower(), f"https://www.twitch.tv/{args.twitch}",
                               channel_id=args.channel_id)] if args.twitch else []
         serve(cfg, initial)
+    elif args.cmd == "whisper":
+        from .whisper_cli import run_whisper
+        raise SystemExit(run_whisper(cfg, args))
+    elif args.cmd == "twitch-check":
+        from .twitch_setup import twitch_check
+        raise SystemExit(twitch_check(cfg, chat_seconds=args.chat))
+    elif args.cmd == "credentials":
+        from .twitch_setup import prompt_twitch_credentials
+        raise SystemExit(prompt_twitch_credentials())
     elif args.cmd == "doctor":
         from .doctor import run_doctor
         raise SystemExit(run_doctor(cfg))

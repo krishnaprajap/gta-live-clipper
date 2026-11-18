@@ -56,6 +56,7 @@ edit:
 transcription:
   enabled: true
   model: small            # tiny/base/small run fine on CPU (int8)
+  required: true          # if Whisper fails: clip marked caption_failed and NOT published (never silent)
   compute_type: int8
   language: null          # auto-detect
 

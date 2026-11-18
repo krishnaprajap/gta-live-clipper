@@ -54,6 +54,82 @@ They enable the automatic start and reconnect whenever the channel goes live in 
 powershell -ExecutionPolicy Bypass -File scripts\windows\restart.ps1
 ```
 
+## Fix and verify Whisper captions
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\verify-whisper.ps1
+```
+
+This script:
+
+1. **Diagnoses** the model cache in `<DataDir>\hf`. It reports interrupted downloads (`*.incomplete`),
+   missing files, and files whose size or SHA-256 doesn't match the Hugging Face Hub.
+2. **Repairs** problems by resuming interrupted downloads (with retries and a 60 s timeout for slow
+   connections) and replacing corrupt files. If that isn't enough, it deletes the model and downloads
+   it again. Add `-Clean` to force a clean download.
+3. **Transcribes** a sentence spoken by the built-in Windows voice. The transcript must match it.
+4. **Runs the full clipping pipeline** on the existing test video with that speech mixed in. The new
+   clip must have burned-in captions.
+
+Individual commands:
+
+```powershell
+.venv\Scripts\python.exe -m clipper whisper status --deep
+```
+
+```powershell
+.venv\Scripts\python.exe -m clipper whisper repair
+```
+
+```powershell
+.venv\Scripts\python.exe -m clipper whisper repair --clean
+```
+
+```powershell
+.venv\Scripts\python.exe -m clipper whisper verify --latest-clip
+```
+
+**Captions are never skipped silently.** If Whisper fails on a clip, the vertical video is still made,
+but the clip is marked `caption_failed`. The error shows in the dashboard and log, and the clip is
+**held back from publishing**. `doctor` fails while the model is incomplete. A clip with no speech
+is logged as "no speech detected".
+
+## Twitch Client ID and Client Secret
+
+They're free. Never paste them into chats, screenshots or tickets.
+
+1. Turn on two-factor authentication for your Twitch account: twitch.tv → profile picture →
+   **Settings → Security and Privacy → Two-Factor Authentication**. Twitch requires it before you can
+   register applications.
+2. Go to **https://dev.twitch.tv/console** and log in with that account.
+3. Click **Applications → Register Your Application** and fill in:
+   - **Name:** something unique, e.g. `gta-clipper-<yourname>`. It can't contain "Twitch".
+   - **OAuth Redirect URLs:** `http://localhost`
+   - **Category:** `Application Integration`
+   - **Client Type:** `Confidential`
+   - Complete the captcha and click **Create**.
+4. Click **Manage** next to the new application. The **Client ID** is shown on that page.
+5. Click **New Secret** and confirm. The **Client Secret** is shown **once**. Copy it straight into the
+   next step. If you lose it, click New Secret again; the old one stops working.
+6. Store both in `.env` with the helper. It hides the secret while you type, checks it with Twitch
+   before saving, re-locks `.env` to your Windows account, runs a read-only check of the whole Twitch
+   integration (including 15 s of chat), and restarts the clipper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\set-twitch-credentials.ps1
+```
+
+The app reads `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` only from `.env`. If Windows already has
+environment variables with the same names, they take precedence; remove them. To re-check at any time:
+
+```powershell
+.venv\Scripts\python.exe -m clipper twitch-check --chat 15
+```
+
+The check validates the credentials and finds the GTA VI category. For every authorized channel it
+confirms the login exists and shows whether it's live and in which category. It optionally checks
+`TWITCH_USER_TOKEN` for `clips:edit` and reads chat. It never prints secret values.
+
 ## Daily use
 
 | What | Command (PowerShell in the app folder) | Or double-click |
