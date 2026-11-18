@@ -142,7 +142,8 @@ class ClipProcessor:
             db.update("clips", clip_id, status="editing", transcript=transcript, srt_path=str(srt) if srt else None)
             ecfg = self.cfg["edit"]
             vertical = raw.with_name(raw.stem + "_vertical.mp4")
-            make_vertical(raw, vertical, srt=srt, credit=f"{channel} • {platform.title()}", width=ecfg["width"],
+            from .whisper_cli import clip_credit
+            make_vertical(raw, vertical, srt=srt, credit=clip_credit(clip["stream_key"]), width=ecfg["width"],
                           height=ecfg["height"], crf=ecfg["crf"], preset=ecfg["preset"],
                           max_duration=ecfg["max_duration_s"], threads=ecfg.get("threads", 2))
 
@@ -171,6 +172,15 @@ class ClipProcessor:
         target = self.publisher.name
         job = db.execute("INSERT INTO publish_jobs(clip_id,target,status,created_at,updated_at) VALUES(?,?,?,?,?)",
                          (clip_id, target, "pending", time.time(), time.time()))
+        if target != "dry_run":
+            platform, ids = self._channel_ids(clip_id)
+            if not self.cfg.publish_allowed(platform, ids):
+                reason = (f"publishing not authorized for {platform}:{'/'.join(ids)}; needs authorized: true AND "
+                          f"publish_allowed: true on its authorized_channels entry")
+                db.update("publish_jobs", job, status="held", error=reason)
+                db.update("clips", clip_id, status="held", error=reason)
+                db.log("warning", "publish", f"clip {clip_id}: {reason}")
+                return {"status": "held", "reason": reason}
         if target != "dry_run" and self.uploads_today() >= self.cfg["publish"]["max_uploads_per_day"]:
             db.update("publish_jobs", job, status="skipped", error="daily upload cap reached")
             return {"status": "skipped", "reason": "daily cap"}
@@ -186,6 +196,14 @@ class ClipProcessor:
                   ("dry_run" if res.status == "dry_run" else "publish_failed"), error=res.error or None)
         db.log("info" if res.ok else "error", "publish", f"clip {clip_id} -> {target}: {res.status} {res.remote_url} {res.error}")
         return {"status": res.status, "url": res.remote_url, "error": res.error}
+
+    def _channel_ids(self, clip_id: int) -> tuple[str, list[str]]:
+        r = self.db.one("SELECT c.stream_key, m.signals FROM clips c JOIN moments m ON m.id=c.moment_id WHERE c.id=?", (clip_id,))
+        if not r:
+            return "", []
+        platform, channel = r["stream_key"].split(":", 1)
+        ids = json.loads(r["signals"] or "{}").get("channel_ids") or []
+        return platform, list(dict.fromkeys(ids + [channel]))
 
     async def submit(self, clip_id: int) -> dict:
         return await asyncio.get_running_loop().run_in_executor(self.pool, self.process, clip_id)
@@ -204,14 +222,24 @@ class StreamWorker:
     twitch_api: object = None
     started: float = 0.0
     manual_stop: bool = False
+    state: str = "connecting"        # connecting | capturing | ended | stalled | error | stopped
+    last_error: str | None = None
 
     def __post_init__(self):
         c, d = self.cfg["capture"], self.cfg["detection"]
         self.buffer = RollingBuffer(key=self.spec.key, out_dir=self.cfg.data_dir / "buffers" / f"{safe_name(self.spec.key)}_{int(time.time())}",
                                     source=self.spec.source, quality=c["quality"], segment_s=c["segment_s"],
-                                    buffer_s=c["buffer_s"], simulate_file=self.spec.platform == "file")
+                                    buffer_s=c["buffer_s"], simulate_file=self.spec.platform == "file",
+                                    stream_timeout_s=float(c.get("stream_timeout_s", 60)))
         self.chat_window = ChatWindow(d["hype_terms"])
-        self.detector = MomentDetector(weights=d["weights"], threshold=d["threshold"], cooldown_s=d["cooldown_s"])
+        weights = dict(d["weights"])
+        sp = d.get("speech_signal") or {}
+        self.speech = None
+        if sp.get("enabled"):
+            from .signals.speech import SpeechSignal
+            self.speech = SpeechSignal(d["hype_terms"], sp.get("model", "tiny"), int(sp.get("threads", 1)))
+            weights.setdefault("speech", float(sp.get("weight", 1.0)))
+        self.detector = MomentDetector(weights=weights, threshold=d["threshold"], cooldown_s=d["cooldown_s"])
         self.chat = self._make_chat()
         self.offsets: list[float] = []
         self.pending: list[dict] = []
@@ -232,6 +260,7 @@ class StreamWorker:
                               started_at=time.time(), error=None)
         self.db.log("info", key, "capture started")
         self.buffer.start()
+        self.tasks.append(asyncio.create_task(self._stop_watch()))
         if self.chat:
             self.tasks.append(asyncio.create_task(self.chat.run(self.stop)))
         loop = asyncio.get_running_loop()
@@ -244,8 +273,15 @@ class StreamWorker:
                 self.offsets = (self.offsets + [seg.wall_end - seg.end])[-10:]
                 off = statistics.median(self.offsets) + float(d.get("chat_delay_s", 0))
                 count, hype = self.chat_window.stats(seg.start + off, seg.end + off)
+                if self.state == "connecting":
+                    self.state = "capturing"
+                    self.db.log("info", key, "receiving live video")
                 analysis = await loop.run_in_executor(self.analysis_pool, analyze_segment, seg.path)
                 feats = self.detector.features(seg.duration, count, hype, analysis)
+                if self.speech:
+                    sv = await loop.run_in_executor(self.analysis_pool, self.speech.score, str(seg.path), seg.duration)
+                    if sv is not None:
+                        feats["speech"] = sv
                 det = self.detector.update(seg.end, feats)
                 self._extend_pending(seg.end, self.detector.history[-1]["score"])
                 if det:
@@ -256,6 +292,8 @@ class StreamWorker:
             # keeps the tasks), so a reconnect is not delayed by encoding.
             await self._flush_ready(force=True)
             status, err = ("stalled", "no data for stall_timeout_s; reconnecting") if self.buffer.stalled else ("ended", None)
+            if self.manual_stop:
+                status, err = "stopped", None
             if not self.buffer.segments:
                 status, err = "error", self.buffer.tail_log()
         except asyncio.CancelledError:
@@ -265,9 +303,15 @@ class StreamWorker:
             self.buffer.stop()
             for t in self.tasks:
                 t.cancel()
-        self.buffer.cleanup()  # pending clips were extracted above  # clips are already extracted; free the rolling buffer
+        self.buffer.cleanup()  # pending clips were extracted above
+        self.state, self.last_error = status, err
         self.db.upsert_stream(self.spec.platform, self.spec.channel, status=status, error=err)
         self.db.log("info" if status != "error" else "error", key, f"capture {status}" + (f": {err[-300:]}" if err else ""))
+
+    async def _stop_watch(self) -> None:
+        """STOP must work even while no segment arrives (connecting/stalled)."""
+        await self.stop.wait()
+        await asyncio.get_running_loop().run_in_executor(None, self.buffer.stop)
 
     def _extend_pending(self, t: float, score: float) -> None:
         for p in self.pending:
@@ -280,7 +324,8 @@ class StreamWorker:
         pin = self.buffer.pin(det.t - d["pre_roll_s"] - 10, det.t + d["post_roll_s"] + 30)
         self.pending.append({"moment": moment_id, "peak": det.t, "first": det.t, "score": det.score, "pin": pin})
         self.db.log("info", self.spec.key, f"moment {moment_id} detected at {det.t:.1f}s score={det.score:.2f}")
-        if self.cfg["publish"]["mode"] == "twitch_clip" and self.spec.platform == "twitch":
+        if (self.cfg["publish"]["mode"] == "twitch_clip" and self.spec.platform == "twitch"
+                and self.cfg.publish_allowed("twitch", [self.spec.channel])):
             await self._twitch_native_clip(moment_id)
 
     async def _twitch_native_clip(self, moment_id: int) -> None:
@@ -322,6 +367,7 @@ class StreamWorker:
             sig = json.loads(self.db.one("SELECT signals FROM moments WHERE id=?", (p["moment"],))["signals"])
             sig["window"] = [start, end]
             sig["session"] = self.buffer.out_dir.name  # unique per capture session
+            sig["channel_ids"] = [x for x in (self.spec.channel_id, self.spec.channel) if x]
             self.db.execute("UPDATE moments SET status='extracted', signals=? WHERE id=?", (json.dumps(sig), p["moment"]))
             now = time.time()
             clip_id = self.db.execute("INSERT INTO clips(moment_id,stream_key,raw_path,status,created_at,updated_at) "
@@ -445,7 +491,114 @@ class Orchestrator:
             await self.watch_twitch_once()
             await asyncio.sleep(poll)
 
+    # -- YouTube Live sessions started from the dashboard / CLI ----------------
+    def validate_youtube(self, url: str, resolver=None):
+        """Blocking: URL check -> live check -> allowlist. Returns (info, ok, http_status, message)."""
+        from .youtube_live import authorization, resolve
+        info = (resolver or (lambda u: resolve(u, secret("YOUTUBE_API_KEY"))))(url)
+        if info.status == "invalid":
+            return info, False, 400, info.message
+        if info.status == "error":
+            return info, False, 502, f"{info.message}: {info.raw_error}".strip(": ")
+        if not info.live:
+            return info, False, 409, info.message or "not live"
+        ok, msg = authorization(self.cfg, info)
+        if not ok:
+            return info, False, 403, msg
+        return info, True, 200, msg
+
+    def launch_youtube(self, info, url: str) -> str:
+        """Must run on the event loop. Starts an independent capture session."""
+        channel = info.handle or info.channel_id or info.video_id
+        spec = StreamSpec("youtube", channel, info.watch_url, channel_id=info.channel_id, live_chat_id=info.live_chat_id)
+        sessions = self.__dict__.setdefault("youtube_sessions", {})
+        sess = sessions.get(spec.key)
+        if sess and spec.key in self.workers and not self.workers[spec.key][1].done():
+            return spec.key  # already capturing
+        self.start_stream(spec)
+        sessions[spec.key] = {"url": url, "watch_url": info.watch_url, "title": info.title, "video_id": info.video_id,
+                              "channel": channel, "channel_id": info.channel_id, "state": "capturing", "fails": 0,
+                              "next": 0.0, "reconnects": 0, "started": time.time(), "message": "", "spec": spec}
+        self.db.upsert_stream("youtube", channel, title=info.title, viewers=info.viewers, url=info.watch_url)
+        self.db.log("info", spec.key, f"YouTube Live capture started: {info.title!r} ({info.watch_url}, check via {info.method})")
+        if not info.live_chat_id:
+            self.db.log("info", spec.key, "live chat signal off (needs YOUTUBE_API_KEY); using audio + video signals")
+        return spec.key
+
+    async def watch_youtube_once(self, resolver=None) -> list[str]:
+        """Reconnect interrupted sessions while the stream is still live; end
+        sessions whose broadcast has ended. Never falls back to VOD."""
+        from .youtube_live import resolve
+        wcfg = self.cfg.get("youtube_watch", {})
+        resolver = resolver or (lambda u: resolve(u, secret("YOUTUBE_API_KEY")))
+        sessions = self.__dict__.setdefault("youtube_sessions", {})
+        now, restarted = time.time(), []
+        for key, sess in list(sessions.items()):
+            entry = self.workers.get(key)
+            if entry and not entry[1].done():
+                sess["state"] = entry[0].state
+                continue
+            if entry and entry[0].manual_stop:
+                sess["state"] = "stopped"
+                self.db.log("info", key, "capture stopped by user")
+                sessions.pop(key)
+                continue
+            if entry and sess.get("handled") is not entry[0]:  # first look at this worker's exit
+                lived = now - (entry[0].started or now)
+                sess["fails"] = 0 if lived > wcfg.get("healthy_after_s", 120) else sess["fails"] + 1
+                delay = 0 if not sess["fails"] else min(wcfg.get("min_backoff_s", 10) * 2 ** (sess["fails"] - 1),
+                                                         wcfg.get("max_backoff_s", 300))
+                sess["next"], sess["handled"] = now + delay, entry[0]
+                sess["state"] = "reconnecting"
+                sess["message"] = f"capture interrupted ({entry[0].state}: {(entry[0].last_error or '')[-200:]})".strip()
+                self.db.log("warning", key, sess["message"] + (f"; checking stream in {delay:.0f}s" if delay else "; checking stream"))
+            if now < sess["next"]:
+                continue
+            info = await asyncio.get_running_loop().run_in_executor(None, resolver, sess["watch_url"])
+            if info.live:
+                if self._active_count() >= self.max_streams_for_youtube():
+                    continue
+                self.workers.pop(key, None)
+                self.start_stream(sess["spec"])
+                sess["reconnects"] += 1
+                sess["state"] = "capturing"
+                restarted.append(key)
+                self.db.log("info", key, f"stream still live; reconnected (#{sess['reconnects']})")
+            elif info.status in ("not_live", "invalid", "upcoming"):
+                sess["state"] = "ended"
+                self.db.log("info", key, f"broadcast ended: {info.message or info.status}; session closed (no VOD download)")
+                self.db.upsert_stream("youtube", sess["channel"], status="ended")
+                self.workers.pop(key, None)
+                sessions.pop(key)
+            else:  # YouTube/streamlink error: report it verbatim, retry with backoff
+                sess["fails"] += 1
+                if sess["fails"] > wcfg.get("max_failures", 10):
+                    sess["state"] = "error"
+                    self.db.log("error", key, f"giving up after {sess['fails']} failed checks: {info.message} {info.raw_error}")
+                    self.db.upsert_stream("youtube", sess["channel"], status="error", error=info.raw_error[-500:])
+                    self.workers.pop(key, None)
+                    sessions.pop(key)
+                    continue
+                delay = min(wcfg.get("min_backoff_s", 10) * 2 ** (sess["fails"] - 1), wcfg.get("max_backoff_s", 300))
+                sess["next"] = now + delay
+                sess["state"], sess["message"] = "reconnecting", f"{info.message}: {info.raw_error[-200:]}"
+                self.db.log("error", key, f"live check failed ({sess['message']}); retry in {delay:.0f}s")
+        return restarted
+
+    def max_streams_for_youtube(self) -> int:
+        return self.cfg.max_streams
+
+    async def watch_youtube_forever(self) -> None:
+        poll = float(self.cfg.get("youtube_watch", {}).get("poll_s", 15))
+        while True:
+            try:
+                await self.watch_youtube_once()
+            except Exception as e:  # keep watching other sessions
+                self.db.log("error", "youtube_watch", f"{type(e).__name__}: {e}")
+            await asyncio.sleep(poll)
+
     async def run_forever(self) -> None:
+        self._yt_task = asyncio.create_task(self.watch_youtube_forever())
         dcfg, scfg = self.cfg["discovery"], self.cfg["storage"]
         if secret("TWITCH_CLIENT_ID") and secret("TWITCH_CLIENT_SECRET") and self.cfg.get("twitch_watch", {}).get("enabled", True):
             self._watch_task = asyncio.create_task(self.watch_twitch_forever())
@@ -454,7 +607,8 @@ class Orchestrator:
         last_cleanup = 0.0
         while True:
             for key, (w, t) in list(self.workers.items()):
-                if t.done() and not (key.startswith("twitch:") and hasattr(self, "_watch_task")):
+                if t.done() and not (key.startswith("twitch:") and hasattr(self, "_watch_task")) \
+                        and key not in self.__dict__.get("youtube_sessions", {}):
                     self.workers.pop(key)
             if time.time() - last_cleanup > 600:
                 res = cleanup(self.db, self.cfg.data_dir, scfg["max_disk_gb"], scfg["keep_clips_days"], scfg["keep_published_days"])

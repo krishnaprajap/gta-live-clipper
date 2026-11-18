@@ -47,6 +47,8 @@ def main(argv=None) -> None:
     wh.add_argument("--media", help="verify: audio/video file with speech")
     wh.add_argument("--expect-file", help="verify: text file with what is said in --media")
     wh.add_argument("--latest-clip", action="store_true", help="verify: check the newest clip has captions")
+    yc = sub.add_parser("youtube-check", help="validate a YouTube Live URL: format, live state, channel authorization")
+    yc.add_argument("url")
     tc = sub.add_parser("twitch-check", help="verify Twitch credentials, GTA VI category, channels (read-only)")
     tc.add_argument("--chat", type=int, default=0, help="also read chat of the first channel for N seconds")
     cr = sub.add_parser("credentials", help="enter credentials into .env without showing them")
@@ -107,6 +109,13 @@ def main(argv=None) -> None:
     elif args.cmd == "whisper":
         from .whisper_cli import run_whisper
         raise SystemExit(run_whisper(cfg, args))
+    elif args.cmd == "youtube-check":
+        from .youtube_live import authorization, resolve
+        info = resolve(args.url, secret("YOUTUBE_API_KEY"))
+        print(json.dumps(info.as_dict(), indent=1))
+        ok, msg = authorization(cfg, info) if info.live else (False, info.message)
+        print("RESULT:", "READY to capture" if ok else f"NOT startable: {msg}")
+        raise SystemExit(0 if ok else 1)
     elif args.cmd == "twitch-check":
         from .twitch_setup import twitch_check
         raise SystemExit(twitch_check(cfg, chat_seconds=args.chat))

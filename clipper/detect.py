@@ -49,7 +49,7 @@ class MomentDetector:
 
     def __post_init__(self) -> None:
         # minimum scales stop tiny absolute changes in quiet streams looking huge
-        mins = {"chat_rate": 0.3, "chat_hype": 0.15, "audio": 2.0, "scene": 3.0}
+        mins = {"chat_rate": 0.3, "chat_hype": 0.15, "audio": 2.0, "scene": 3.0, "speech": 0.5}
         self.stats = {k: RollingStat(min_scale=mins.get(k, 1e-3)) for k in self.weights}
 
     def features(self, seg_dur: float, chat_count: int, chat_hype: int, analysis: dict) -> dict:

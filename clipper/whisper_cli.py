@@ -73,7 +73,13 @@ def _gray_frame(video: Path, t: float, w: int = 270, h: int = 480) -> bytes:
                           capture_output=True, timeout=60).stdout
 
 
-def captions_burned(raw: Path, vertical: Path, srt: Path, cfg) -> tuple[bool, str]:
+def clip_credit(stream_key: str) -> str:
+    """The credit line the pipeline draws (must match for a fair comparison)."""
+    platform, channel = stream_key.split(":", 1)
+    return f"{channel} \u2022 {platform.title()}"
+
+
+def captions_burned(raw: Path, vertical: Path, srt: Path, cfg, credit: str | None = None) -> tuple[bool, str]:
     """Render the same frame WITHOUT subtitles and compare the caption area.
     Burned-in text = many strongly different pixels in the lower part of the
     frame, while the upper part (no captions) stays the same."""
@@ -86,7 +92,7 @@ def captions_burned(raw: Path, vertical: Path, srt: Path, cfg) -> tuple[bool, st
     e = cfg["edit"]
     with tempfile.TemporaryDirectory() as td:
         ref = Path(td) / "nosubs.mp4"
-        make_vertical(raw, ref, srt=None, credit=None,  # credit sits above both compared areas
+        make_vertical(raw, ref, srt=None, credit=credit,
                       width=e["width"], height=e["height"], crf=e["crf"], preset=e["preset"], max_duration=t + 1.0,
                       threads=e.get("threads", 2))
         a, b = _gray_frame(vertical, t), _gray_frame(ref, t)
@@ -104,7 +110,7 @@ def captions_burned(raw: Path, vertical: Path, srt: Path, cfg) -> tuple[bool, st
 def _verify_latest_clip(cfg, expected: str | None = None) -> int:
     from .db import DB
     db = DB(cfg.data_dir / "clipper.db")
-    c = db.one("SELECT id, status, error, transcript, srt_path, raw_path, vertical_path FROM clips ORDER BY id DESC LIMIT 1")
+    c = db.one("SELECT id, stream_key, status, error, transcript, srt_path, raw_path, vertical_path FROM clips ORDER BY id DESC LIMIT 1")
     if not c:
         print("no clips yet")
         return 1
@@ -119,7 +125,8 @@ def _verify_latest_clip(cfg, expected: str | None = None) -> int:
         print(f"recall vs expected sentence: {r:.2f}")
         checks["transcript matches spoken sentence (recall >= 0.6)"] = r >= 0.6
     if srt_ok and c["vertical_path"] and Path(c["vertical_path"]).exists():
-        ok, detail = captions_burned(Path(c["raw_path"]), Path(c["vertical_path"]), Path(c["srt_path"]), cfg)
+        ok, detail = captions_burned(Path(c["raw_path"]), Path(c["vertical_path"]), Path(c["srt_path"]), cfg,
+                                     credit=clip_credit(c["stream_key"]))
         print("burn-in:", detail)
         checks["captions burned into vertical video"] = ok
     else:

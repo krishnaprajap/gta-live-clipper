@@ -44,6 +44,7 @@ class RollingBuffer:
     segment_s: int = 4
     buffer_s: int = 240
     simulate_file: bool = False
+    stream_timeout_s: float = 60.0
     segments: list[Segment] = field(default_factory=list)
     pins: dict[int, tuple[float, float]] = field(default_factory=dict)
     _procs: list[subprocess.Popen] = field(default_factory=list)
@@ -79,7 +80,7 @@ class RollingBuffer:
         if not streamlink_available():
             raise RuntimeError("streamlink is not installed")
         sl = subprocess.Popen([*streamlink_cmd(), "--stdout", "--loglevel", "warning",
-                               "--hls-live-edge", "2",
+                               "--hls-live-edge", "2", "--stream-timeout", str(int(self.stream_timeout_s)),
                                self.source, self.quality], stdout=subprocess.PIPE, stderr=log)
         ff = subprocess.Popen(self._ffmpeg_segment_args(["-i", "pipe:0"]), stdin=sl.stdout, stdout=log, stderr=log)
         sl.stdout.close()  # ffmpeg owns the pipe now

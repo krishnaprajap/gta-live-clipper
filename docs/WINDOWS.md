@@ -130,6 +130,75 @@ The check validates the credentials and finds the GTA VI category. For every aut
 confirms the login exists and shows whether it's live and in which category. It optionally checks
 `TWITCH_USER_TOKEN` for `clips:edit` and reads chat. It never prints secret values.
 
+## YouTube Live: paste a URL and START
+
+1. Allow the channel once in `config\config.yaml`. Use the channel ID (`UC…`) or the `@handle`, and
+   only for channels you own or have the creator's explicit permission for:
+
+   ```yaml
+   authorized_channels:
+     - platform: youtube
+       channel: "@yourchannel"
+       authorized: true          # capture + clip
+       publish_allowed: false    # uploading needs a separate, explicit yes
+       permission_note: "my own channel"
+   ```
+
+2. Optionally put a free `YOUTUBE_API_KEY` in `.env` (Google Cloud → YouTube Data API v3 → API
+   key). It gives authoritative live and ended states, reliable channel IDs, and the live chat
+   signal. Without it, live checks use streamlink, the channel comes from YouTube's oEmbed page, and
+   detection uses audio + video only.
+3. In the dashboard's **YouTube Live** panel, paste the URL (`watch?v=`, `youtu.be/`, `/live/…` or
+   `@handle/live`), tick the permission box, and click **START**. **Check** only validates the URL.
+
+   You get a clear refusal for each of these cases:
+
+   | Result | HTTP |
+   |---|---|
+   | Invalid URL | 400 |
+   | Not live: scheduled, ended or a VOD | 409 |
+   | Channel not on the allowlist | 403 |
+   | YouTube or streamlink error, shown verbatim | 502 |
+
+**While it runs:**
+
+- Capture follows the live edge into a rolling buffer. The default keeps 3 minutes; footage needed
+  for a pending clip is kept until it's extracted.
+- Clips are cut, captioned and rendered while the broadcast is still live.
+- **STOP** works at any time, including while connecting or reconnecting.
+
+**Interruptions:**
+
+- If capture drops or stalls while the stream is still live, it reconnects with backoff (10 s up to
+  5 min). Each reconnect is a new, independent capture session.
+- When the broadcast ends, the session closes.
+- The app **never downloads a VOD**:
+  - a URL that isn't live is refused;
+  - every reconnect re-checks the live state first;
+  - streamlink's YouTube plugin itself refuses VOD content.
+
+Diagnose a URL from the terminal:
+
+```powershell
+.venv\Scripts\python.exe -m clipper youtube-check "https://www.youtube.com/@yourchannel/live"
+```
+
+**Publishing:**
+
+- Clips stay in `outbox` while `publish.mode` is `dry_run`.
+- With a real publish mode, a clip is uploaded only if its channel has both `authorized: true` and
+  `publish_allowed: true`. Otherwise it's marked `held`.
+
+**Compliance:**
+
+- Capture reads the same live HLS stream YouTube's player receives, through streamlink. It doesn't
+  bypass DRM or other protection.
+- Permission from the creator covers their rights in the content. YouTube's Terms of Service also
+  restrict downloading content that YouTube hasn't authorized.
+- Use this only for your own streams or with explicit permission, and check that your use fits
+  YouTube's terms. If YouTube changes or blocks this method, START and the reconnects show the
+  actual error. Nothing pretends to capture.
+
 ## Daily use
 
 | What | Command (PowerShell in the app folder) | Or double-click |

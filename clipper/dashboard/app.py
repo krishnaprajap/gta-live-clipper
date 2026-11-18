@@ -86,9 +86,14 @@ def create_app(cfg: Config, orch: Orchestrator, loop: asyncio.AbstractEventLoop 
         return {
             "streams": db.query("SELECT platform, channel, title, viewers, status, error, updated_at FROM streams "
                                 "ORDER BY updated_at DESC LIMIT 50"),
-            "active": [{"key": k, "segments": len(w.buffer.segments), "chat_msgs": w.chat_window.total,
+            "active": [{"key": k, "state": w.state, "error": (w.last_error or "")[-300:],
+                        "buffer_s": round(w.buffer.head - (w.buffer.segments[0].start if w.buffer.segments else 0), 1),
+                        "segments": len(w.buffer.segments), "chat_msgs": w.chat_window.total,
                         "chat_connected": bool(w.chat and w.chat.connected), "chat_error": w.chat and w.chat.error,
-                        "last_scores": list(w.detector.history)[-30:]} for k, (w, _) in orch.workers.items()],
+                        "last_scores": list(w.detector.history)[-30:]} for k, (w, t) in orch.workers.items() if not t.done()],
+            "youtube_sessions": [{"key": k, **{f: v.get(f) for f in ("url", "watch_url", "title", "channel", "state",
+                                                                      "reconnects", "message", "started")}}
+                                 for k, v in orch.__dict__.get("youtube_sessions", {}).items()],
             "moments": db.query("SELECT id, stream_key, t, score, status FROM moments ORDER BY id DESC LIMIT 30"),
             "clips": clips,
             "jobs": db.query("SELECT id, clip_id, target, status, remote_url, error, attempts FROM publish_jobs "
@@ -129,16 +134,46 @@ def create_app(cfg: Config, orch: Orchestrator, loop: asyncio.AbstractEventLoop 
             raise HTTPException(403, str(e))
         return {"started": spec.key}
 
+    @app.get("/api/youtube/check")
+    def youtube_check(url: str):
+        """Validate only: URL format, live state, channel authorization."""
+        info, ok, code, msg = orch.validate_youtube(url)
+        return {"ok": ok, "status": info.status, "message": msg, "info": info.as_dict()}
+
+    @app.post("/api/youtube/start")
+    def youtube_start(body: dict):
+        if loop is None:
+            raise HTTPException(503, "orchestrator loop not running")
+        url = str(body.get("url", "")).strip()
+        if not body.get("permission_confirmed"):
+            raise HTTPException(400, "confirm that you own this stream or have the creator's explicit permission")
+        info, ok, code, msg = orch.validate_youtube(url)
+        if not ok:
+            orch.db.log("warning", "youtube", f"start refused ({info.status}) for {url}: {msg}")
+            raise HTTPException(code, msg)
+        orch.db.log("info", "youtube", f"permission confirmed in dashboard for {info.handle or info.channel_id}: {msg}")
+        key = asyncio.run_coroutine_threadsafe(_launch_youtube(orch, info, url), loop).result(15)
+        return {"started": key, "title": info.title, "channel": info.handle or info.channel_id, "method": info.method}
+
     @app.post("/api/streams/{key}/stop")
     def stop(key: str):
         w = orch.workers.get(key)
-        if not w:
-            raise HTTPException(404)
-        w[0].manual_stop = True
-        loop.call_soon_threadsafe(w[0].stop.set)
-        return {"stopping": key}
+        sessions = orch.__dict__.get("youtube_sessions", {})
+        if w and not w[1].done():
+            w[0].manual_stop = True
+            loop.call_soon_threadsafe(w[0].stop.set)
+            return {"stopping": key}
+        if key in sessions:  # e.g. waiting to reconnect
+            sessions.pop(key)
+            orch.db.log("info", key, "capture stopped by user (while reconnecting)")
+            return {"stopped": key}
+        raise HTTPException(404)
 
     return app
+
+
+async def _launch_youtube(orch: Orchestrator, info, url: str) -> str:
+    return orch.launch_youtube(info, url)
 
 
 async def _start(orch: Orchestrator, spec: StreamSpec):

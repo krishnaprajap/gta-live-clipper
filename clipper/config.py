@@ -84,6 +84,21 @@ class Config:
                 return bool(c.get("authorized"))
         return False
 
+    def _entry(self, platform: str, channel: str) -> dict | None:
+        for c in self.raw.get("authorized_channels", []):
+            if c.get("platform") == platform and str(c.get("channel", "")).lower() == str(channel).lower():
+                return c
+        return None
+
+    def publish_allowed(self, platform: str, channels: list[str]) -> bool:
+        """Publishing needs BOTH capture authorization and an explicit
+        publish_allowed: true on the creator's allowlist entry."""
+        for ch in channels:
+            e = self._entry(platform, ch) if ch else None
+            if e and e.get("authorized") and e.get("publish_allowed"):
+                return True
+        return False
+
     def redacted(self) -> dict:
         """Config safe to show in the dashboard; secrets reported only as set/unset."""
         out = copy.deepcopy(self.raw)

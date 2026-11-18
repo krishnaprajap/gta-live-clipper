@@ -18,6 +18,14 @@ input{background:#0f1115;color:var(--fg);border:1px solid #333;border-radius:6px
 <header><h1>GTA VI Clipper</h1><span id="mode" class="pill"></span><span id="budget" class="pill"></span>
 </header>
 <main>
+<section><h2>YouTube Live</h2>
+<form id="ytform" style="display:grid;gap:8px">
+<input id="yturl" type="url" required placeholder="https://www.youtube.com/watch?v=… or youtube.com/@channel/live" style="width:100%">
+<label class="mut" style="font-size:13px"><input id="ytperm" type="checkbox"> I own this stream or have the creator's explicit permission to capture and clip it</label>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" id="ytcheck">Check</button><button type="submit" style="background:var(--acc)">START</button></div>
+<div id="ytmsg" class="mut" style="font-size:13px"></div>
+</form>
+<div id="ytsessions" style="margin-top:10px"></div></section>
 <section><h2>Active captures</h2><div id="active" class="mut">none</div></section>
 <section><h2>Streams</h2><table id="streams"></table></section>
 <section><h2>Clips</h2><table id="clips"></table></section>
@@ -28,17 +36,32 @@ input{background:#0f1115;color:var(--fg);border:1px solid #333;border-radius:6px
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const cls=s=>/fail|error|reject/.test(s)?'err':/publish|dry_run|ready|capturing|ok/.test(s)?'ok':'warn';
+const cls=s=>/fail|error|reject|held/.test(s)?'err':/publish|dry_run|ready|capturing|ok|live/.test(s)?'ok':'warn';
 function rows(el,cols,data,fmt){$(el).innerHTML='<tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>'+
  data.map(r=>'<tr>'+fmt(r).map(v=>`<td>${v}</td>`).join('')+'</tr>').join('')}
 async function republish(id){const r=await fetch(`/api/clips/${id}/publish`,{method:'POST'});alert(JSON.stringify(await r.json()))}
+async function api(method,url,body){const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+ let j={};try{j=await r.json()}catch(e){};return {ok:r.ok,status:r.status,j}}
+function ytmsg(t,c){$('ytmsg').innerHTML=`<span class=${c}>${esc(t)}</span>`}
+$('ytcheck').onclick=async()=>{ytmsg('checking…','mut');const r=await api('GET','/api/youtube/check?url='+encodeURIComponent($('yturl').value));
+ if(!r.ok){ytmsg(r.j.detail||('HTTP '+r.status),'err');return}
+ const i=r.j.info;ytmsg(`${r.j.ok?'ready':'not startable'} · ${i.status} · ${i.title||''} · ${i.handle||i.channel_id||''} · ${r.j.message}`,r.j.ok?'ok':'err')};
+$('ytform').onsubmit=async e=>{e.preventDefault();if(!$('ytperm').checked){ytmsg('Confirm ownership/permission first.','err');return}
+ ytmsg('validating and connecting…','mut');const r=await api('POST','/api/youtube/start',{url:$('yturl').value,permission_confirmed:true});
+ if(r.ok){ytmsg(`started ${r.j.started}: ${r.j.title||''} (live check via ${r.j.method})`,'ok');tick()}else ytmsg(r.j.detail||('HTTP '+r.status),'err')};
+async function stopStream(key){if(!confirm('Stop '+key+'?'))return;const r=await api('POST','/api/streams/'+encodeURIComponent(key)+'/stop');
+ ytmsg(r.ok?'stopping '+key:(r.j.detail||'HTTP '+r.status),r.ok?'ok':'err');tick()}
 async function tick(){
  const d=await (await fetch('/api/status')).json();
  $('mode').textContent='publish: '+d.publish_mode;
  $('budget').textContent=`AI ₹${d.budget.ai_spent_inr}/${d.budget.ai_cap_inr}`;
  $('active').innerHTML=d.active.length?d.active.map(a=>{const mx=Math.max(4,...a.last_scores.map(s=>s.score));
-  return `<div><b>${esc(a.key)}</b> <span class="mut">${a.segments} segs · ${a.chat_msgs} chat msgs · chat ${a.chat_connected?'<span class=ok>connected</span>':'<span class=warn>'+esc(a.chat_error||'off')+'</span>'}</span>
+  return `<div><b>${esc(a.key)}</b> <span class=${cls(a.state)}>${esc(a.state)}</span> <button onclick="stopStream('${esc(a.key)}')">STOP</button>
+  ${a.error?`<div class=err>${esc(a.error)}</div>`:''}<span class="mut">buffer ${a.buffer_s}s · ${a.segments} segs · ${a.chat_msgs} chat msgs · chat ${a.chat_connected?'<span class=ok>connected</span>':'<span class=warn>'+esc(a.chat_error||'off')+'</span>'}</span>
   <div class="spark">${a.last_scores.map(s=>`<i title="t=${s.t} score=${s.score}" style="height:${100*s.score/mx}%"></i>`).join('')}</div></div>`}).join(''):'none';
+ $('ytsessions').innerHTML=(d.youtube_sessions||[]).map(s=>`<div style="font-size:13px"><b>${esc(s.channel)}</b> <span class=${cls(s.state)}>${esc(s.state)}</span>
+  · reconnects ${s.reconnects} · <span class=mut>${esc((s.title||'').slice(0,50))}</span>${s.message?`<div class=warn>${esc(s.message)}</div>`:''}
+  ${s.state!=='capturing'?`<button onclick="stopStream('${esc(s.key)}')">STOP</button>`:''}</div>`).join('');
  rows('streams',['stream','viewers','status'],d.streams,r=>[`${esc(r.platform)}:${esc(r.channel)}<br><span class=mut>${esc((r.title||'').slice(0,60))}</span>`,r.viewers??'',`<span class=${cls(r.status)}>${esc(r.status)}</span>`]);
  rows('clips',['#','title','status',''],d.clips,r=>[r.id,esc(r.title||r.stream_key)+(r.error?`<br><span class=err>${esc(r.error)}</span>`:''),`<span class=${cls(r.status)}>${esc(r.status)}</span>`,
   r.has_video?`<a href="/media/${r.id}" target=_blank>view</a> <button onclick="republish(${r.id})">publish</button>`:'']);
