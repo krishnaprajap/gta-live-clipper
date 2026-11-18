@@ -14,10 +14,11 @@ def _req(cfg: Config) -> list[tuple[str, str, bool]]:
     mode = cfg["publish"]["mode"]
     auth = [c for c in cfg["authorized_channels"] if c.get("authorized")]
     yt_auth = any(c["platform"] == "youtube" for c in auth)
+    tw_auth = any(c["platform"] == "twitch" for c in auth)
     return [
         ("DASHBOARD_TOKEN", "dashboard login (serve)", True),
-        ("TWITCH_CLIENT_ID", "Twitch discovery (serve autonomous mode)", False),
-        ("TWITCH_CLIENT_SECRET", "Twitch discovery (serve autonomous mode)", False),
+        ("TWITCH_CLIENT_ID", "Twitch live watchdog: auto start/reconnect + discovery", tw_auth),
+        ("TWITCH_CLIENT_SECRET", "Twitch live watchdog: auto start/reconnect + discovery", tw_auth),
         ("TWITCH_USER_TOKEN", "publish.mode=twitch_clip (clips:edit)", mode == "twitch_clip"),
         ("YOUTUBE_API_KEY", "YouTube discovery + live chat", yt_auth),
         ("YOUTUBE_CLIENT_ID", "publish.mode=youtube", mode == "youtube"),

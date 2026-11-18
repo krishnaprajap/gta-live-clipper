@@ -134,6 +134,7 @@ def create_app(cfg: Config, orch: Orchestrator, loop: asyncio.AbstractEventLoop 
         w = orch.workers.get(key)
         if not w:
             raise HTTPException(404)
+        w[0].manual_stop = True
         loop.call_soon_threadsafe(w[0].stop.set)
         return {"stopping": key}
 

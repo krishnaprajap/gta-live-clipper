@@ -22,10 +22,21 @@ discovery:
   max_streams: 3          # simultaneous captures (CPU bound)
   interval_s: 300
 
+# Auto start / reconnect for authorized Twitch channels (needs free
+# TWITCH_CLIENT_ID/SECRET app credentials; one Helix request per poll).
+twitch_watch:
+  enabled: true
+  poll_s: 30              # live check interval
+  require_game: true      # only capture while the category is one of discovery.game_names
+  min_backoff_s: 10       # retry delay after a quick failure, doubling...
+  max_backoff_s: 600      # ...up to this
+  healthy_after_s: 120    # a capture that ran this long resets the backoff
+
 capture:
   quality: "720p,720p60,480p,best"
   segment_s: 4
   buffer_s: 240           # rolling buffer kept on disk per stream
+  stall_timeout_s: 300    # no new data this long while "running" -> kill + reconnect (covers ad breaks)
 
 detection:
   pre_roll_s: 20

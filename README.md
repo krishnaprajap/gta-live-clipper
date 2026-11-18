@@ -138,7 +138,8 @@ live score sparkline for each stream to help with this.
 
 ## Cost and resources (₹8,000/month budget)
 
-**For the first real-world test (one stream), follow [docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md).**
+**For the first real-world test (one stream), follow [docs/CHECKLIST.md](docs/CHECKLIST.md)** (short) or
+[docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md) (detailed).
 It has measured numbers, the exact VPS spec and the step-by-step setup.
 
 Measured on a 4-vCPU container:

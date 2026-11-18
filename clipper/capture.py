@@ -48,6 +48,7 @@ class RollingBuffer:
     _procs: list[subprocess.Popen] = field(default_factory=list)
     _read_rows: int = 0
     _pin_seq: int = 0
+    stalled: bool = False
 
     def __post_init__(self) -> None:
         self.out_dir = Path(self.out_dir)
@@ -174,13 +175,22 @@ class RollingBuffer:
         shutil.rmtree(self.out_dir, ignore_errors=True)
 
 
-async def wait_for_segments(buf: RollingBuffer, poll_s: float = 0.5):
-    """Async generator yielding new segments until capture stops."""
+async def wait_for_segments(buf: RollingBuffer, poll_s: float = 0.5, stall_s: float | None = None):
+    """Async generator yielding new segments until capture stops.
+    If capture is still 'running' but produces no segment for `stall_s`
+    seconds (hung connection), it is killed so the caller can reconnect."""
     idle_after_stop = 0
+    last_new = time.monotonic()
+    buf.stalled = False
     while True:
         new = buf.poll_new()
         for s in new:
             yield s
+        if new:
+            last_new = time.monotonic()
+        elif stall_s and buf.running and time.monotonic() - last_new > stall_s:
+            buf.stalled = True
+            buf.stop()
         if not buf.running:
             idle_after_stop += 1
             if idle_after_stop > 3 and not new:

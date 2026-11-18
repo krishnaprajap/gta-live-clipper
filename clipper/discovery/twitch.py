@@ -31,6 +31,7 @@ class StreamInfo:
     live_chat_id: str = ""   # YouTube only
     video_id: str = ""       # YouTube only
     authorized: bool = False
+    game: str = ""
 
 
 class TwitchAPI:
@@ -53,8 +54,13 @@ class TwitchAPI:
         return self._token
 
     def _get(self, path: str, params) -> dict:
-        r = self.http.get(f"{HELIX}{path}", params=params,
-                          headers={"Client-Id": self.client_id, "Authorization": f"Bearer {self._app_token()}"})
+        for attempt in range(2):
+            r = self.http.get(f"{HELIX}{path}", params=params,
+                              headers={"Client-Id": self.client_id, "Authorization": f"Bearer {self._app_token()}"})
+            if r.status_code == 401 and attempt == 0:  # app token expired/revoked -> refresh once
+                self._token = None
+                continue
+            break
         r.raise_for_status()
         return r.json()
 
@@ -79,7 +85,19 @@ class TwitchAPI:
             out.append(StreamInfo(platform="twitch", channel=s["user_login"], title=s.get("title", ""),
                                   viewers=int(s.get("viewer_count", 0)), url=f"https://www.twitch.tv/{s['user_login']}",
                                   language=s.get("language", ""), started_at=s.get("started_at", ""),
-                                  channel_id=s["user_id"]))
+                                  channel_id=s["user_id"], game=s.get("game_name", "")))
+        return out
+
+    def streams_by_login(self, logins: list[str]) -> list[StreamInfo]:
+        """Live status of specific channels (one request for up to 100 logins)."""
+        out = []
+        for i in range(0, len(logins), 100):
+            params = [("user_login", l) for l in logins[i:i + 100]] + [("type", "live")]
+            for s in self._get("/streams", params).get("data", []):
+                out.append(StreamInfo(platform="twitch", channel=s["user_login"], title=s.get("title", ""),
+                                      viewers=int(s.get("viewer_count", 0)), url=f"https://www.twitch.tv/{s['user_login']}",
+                                      language=s.get("language", ""), started_at=s.get("started_at", ""),
+                                      channel_id=s["user_id"], game=s.get("game_name", "")))
         return out
 
     def user_id(self, login: str) -> str | None:

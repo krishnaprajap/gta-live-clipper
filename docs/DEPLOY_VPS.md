@@ -188,7 +188,7 @@ The first test needs **only `DASHBOARD_TOKEN`**:
 | Variable | Needed for | First test? |
 |---|---|---|
 | `DASHBOARD_TOKEN` | dashboard login (≥ 20 chars; `change-me` is rejected) | **required** |
-| `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` | autonomous discovery; restarting capture when the streamer goes live again | optional |
+| `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` | auto start/reconnect watchdog + discovery (free) | **required** for auto-reconnect |
 | `TWITCH_USER_TOKEN` | `publish.mode: twitch_clip` | no |
 | `YOUTUBE_API_KEY` | YouTube discovery and chat | no |
 | `YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN` | `publish.mode: youtube` | no |
@@ -284,11 +284,18 @@ df -h / && du -sh data/*
 vnstat -h
 ```
 
-Limitations of this first test:
+Automatic start and reconnect (needs `TWITCH_CLIENT_ID/SECRET`, which are free app credentials):
 
-- Without `TWITCH_CLIENT_ID/SECRET`, capture **doesn't restart by itself** after the stream ends.
-  Run the `up -d` command again next time the streamer is live.
-- If the channel is offline at start, the stream shows `error` in the dashboard.
+- Every `twitch_watch.poll_s` (30 s), one Helix request checks the authorized channels.
+- When a channel is live in a `discovery.game_names` category, capture starts.
+- If capture drops while the channel is still live, it reconnects. Each quick failure doubles the
+  wait, from 10 s up to 600 s.
+- A capture that hangs without exiting is restarted after `capture.stall_timeout_s` (300 s) with no
+  data.
+- Twitch chat reconnects by itself with backoff.
+- A **Stop** from the dashboard stays stopped until the channel goes offline.
+- With the watchdog running, plain `docker compose up -d` is enough; `--twitch` isn't needed.
+- Without the credentials there is no auto-reconnect: run `up -d` again whenever the streamer is live.
 
 Stop:
 
