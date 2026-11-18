@@ -20,6 +20,11 @@ $DataDir = (& $Py -c "from clipper.config import load_config; print(load_config(
 $TestDir = Join-Path $DataDir "test"
 New-Item -ItemType Directory -Force -Path $TestDir | Out-Null
 
+Write-Host "`n==> 0. Pinned Whisper dependencies (faster-whisper / PyAV / CTranslate2)" -ForegroundColor Cyan
+& $Py -m pip install --disable-pip-version-check -q -r (Join-Path $Root "requirements.txt")
+if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt failed" }
+& $Py -c "import av, faster_whisper, ctranslate2; print('av', av.__version__, '| faster-whisper', faster_whisper.__version__, '| ctranslate2', ctranslate2.__version__)"
+
 Write-Host "`n==> 1. Model status" -ForegroundColor Cyan
 & $Py -m clipper whisper status
 if ($Clean -or $LASTEXITCODE -ne 0) {

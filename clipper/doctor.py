@@ -72,6 +72,20 @@ def run_doctor(cfg: Config) -> int:
     except Exception as e:
         line("FAIL", "faster-whisper", str(e))
         bad += 1
+    try:  # the exact call faster-whisper uses to read audio (catches PyAV incompatibilities)
+        import tempfile
+        import wave
+        import av
+        from faster_whisper.audio import decode_audio
+        with tempfile.TemporaryDirectory() as td:
+            wav = Path(td) / "probe.wav"
+            with wave.open(str(wav), "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\0\0" * 8000)
+            decode_audio(str(wav))
+        line("OK", "whisper audio decoding", f"PyAV {av.__version__}")
+    except Exception as e:
+        line("FAIL", "whisper audio decoding", f"{type(e).__name__}: {e} -> pip install -r requirements.txt")
+        bad += 1
     if cfg["transcription"]["enabled"]:
         from .whisper_model import status as wstatus
         st = wstatus(cfg["transcription"]["model"], check_remote=False)
