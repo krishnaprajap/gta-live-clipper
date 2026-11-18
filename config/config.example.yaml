@@ -1,0 +1,74 @@
+# GTA VI Clipper configuration. Copy to config/config.yaml.
+# Secrets are NEVER stored here — they come from environment variables (.env).
+
+data_dir: ./data
+
+# Only channels listed here (with authorized: true) are ever captured.
+# Discovery may *suggest* channels, but capture requires explicit permission.
+authorized_channels:
+  - platform: twitch
+    channel: example_streamer
+    authorized: false            # set true only with written permission from the creator
+    permission_note: "Email from creator, 2026-11-01"
+  - platform: youtube
+    channel: UCxxxxxxxxxxxxxxxxxxxxxx   # channel ID
+    authorized: false
+    permission_note: ""
+
+discovery:
+  game_names: ["Grand Theft Auto VI", "GTA VI", "GTA 6"]
+  languages: ["en", "hi"]
+  min_viewers: 50
+  max_streams: 3          # simultaneous captures (CPU bound)
+  interval_s: 300
+
+capture:
+  quality: "720p,720p60,480p,best"
+  segment_s: 4
+  buffer_s: 240           # rolling buffer kept on disk per stream
+
+detection:
+  pre_roll_s: 20
+  post_roll_s: 10
+  cooldown_s: 60
+  threshold: 3.0
+  weights: {chat_rate: 1.0, chat_hype: 1.2, audio: 1.0, scene: 0.4}
+  hype_terms: ["pog", "poggers", "kekw", "lul", "omegalul", "clip", "clip it", "wtf", "lmao", "no way", "holy", "w", "insane", "😂", "💀"]
+
+edit:
+  width: 1080
+  height: 1920
+  crf: 23
+  preset: veryfast
+  max_duration_s: 59
+
+transcription:
+  enabled: true
+  model: small            # tiny/base/small run fine on CPU (int8)
+  compute_type: int8
+  language: null          # auto-detect
+
+metadata:
+  use_llm: false          # template metadata by default (free)
+  llm_model: claude-haiku-5-5
+  llm_cost_per_call_inr: 0.5   # conservative estimate used for budget accounting
+
+budget:
+  monthly_total_inr: 8000
+  ai_monthly_cap_inr: 500      # hard cap; never auto-raised
+
+publish:
+  mode: dry_run           # dry_run | youtube | twitch_clip
+  youtube_privacy: private   # unverified API projects can only upload private videos
+  youtube_category_id: "20"  # Gaming
+  max_uploads_per_day: 5     # YouTube default quota is 10,000 units/day; an upload costs ~1,600
+  credit_template: "Clip from {channel}'s live stream on {platform}. Used with permission."
+
+storage:
+  max_disk_gb: 20
+  keep_clips_days: 3
+  keep_published_days: 1
+
+dashboard:
+  host: 0.0.0.0
+  port: 8080

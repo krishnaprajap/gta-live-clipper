@@ -1,0 +1,16 @@
+services:
+  clipper:
+    build: .
+    restart: unless-stopped
+    env_file: .env                     # secrets stay on the host, never in the image
+    volumes:
+      - ./data:/app/data
+      - ./config/config.yaml:/app/config/config.yaml:ro
+    ports:
+      - "127.0.0.1:8080:8080"          # expose via an SSH tunnel or a TLS reverse proxy
+    deploy:
+      resources:
+        limits: {cpus: "3.5", memory: 6g}
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "3"}

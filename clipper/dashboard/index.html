@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GTA VI Clipper</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--fg:#e8e8ea;--mut:#9aa0aa;--ok:#3fb950;--warn:#d29922;--err:#f85149;--acc:#e83e8c}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{padding:14px 16px;border-bottom:1px solid #262a33;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+h1{font-size:17px;margin:0}h2{font-size:14px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+main{display:grid;gap:14px;padding:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+section{background:var(--card);border-radius:10px;padding:14px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;padding:4px 6px;border-bottom:1px solid #262a33;vertical-align:top}
+.pill{padding:1px 8px;border-radius:99px;font-size:12px;background:#262a33}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}.mut{color:var(--mut)}
+.spark{display:flex;gap:2px;align-items:flex-end;height:40px}.spark i{flex:1;background:var(--acc);min-height:1px;border-radius:2px 2px 0 0}
+button{background:#262a33;color:var(--fg);border:0;border-radius:6px;padding:3px 8px;cursor:pointer}
+input{background:#0f1115;color:var(--fg);border:1px solid #333;border-radius:6px;padding:4px 8px}
+</style></head><body>
+<header><h1>GTA VI Clipper</h1><span id="mode" class="pill"></span><span id="budget" class="pill"></span>
+<span style="flex:1"></span><input id="tok" type="password" placeholder="dashboard token" size="14"></header>
+<main>
+<section><h2>Active captures</h2><div id="active" class="mut">none</div></section>
+<section><h2>Streams</h2><table id="streams"></table></section>
+<section><h2>Clips</h2><table id="clips"></table></section>
+<section><h2>Publishing</h2><table id="jobs"></table></section>
+<section><h2>Moments</h2><table id="moments"></table></section>
+<section><h2>Events</h2><table id="events"></table></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cls=s=>/fail|error|reject/.test(s)?'err':/publish|dry_run|ready|capturing|ok/.test(s)?'ok':'warn';
+try{$('tok').value=localStorage.getItem('tok')||''}catch(e){}
+$('tok').onchange=()=>{try{localStorage.setItem('tok',$('tok').value)}catch(e){}};
+function rows(el,cols,data,fmt){$(el).innerHTML='<tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>'+
+ data.map(r=>'<tr>'+fmt(r).map(v=>`<td>${v}</td>`).join('')+'</tr>').join('')}
+async function republish(id){const r=await fetch(`/api/clips/${id}/publish`,{method:'POST',headers:{'X-Token':$('tok').value}});alert(JSON.stringify(await r.json()))}
+async function tick(){
+ const d=await (await fetch('/api/status')).json();
+ $('mode').textContent='publish: '+d.publish_mode;
+ $('budget').textContent=`AI ₹${d.budget.ai_spent_inr}/${d.budget.ai_cap_inr}`;
+ $('active').innerHTML=d.active.length?d.active.map(a=>{const mx=Math.max(4,...a.last_scores.map(s=>s.score));
+  return `<div><b>${esc(a.key)}</b> <span class="mut">${a.segments} segs · ${a.chat_msgs} chat msgs · chat ${a.chat_connected?'<span class=ok>connected</span>':'<span class=warn>'+esc(a.chat_error||'off')+'</span>'}</span>
+  <div class="spark">${a.last_scores.map(s=>`<i title="t=${s.t} score=${s.score}" style="height:${100*s.score/mx}%"></i>`).join('')}</div></div>`}).join(''):'none';
+ rows('streams',['stream','viewers','status'],d.streams,r=>[`${esc(r.platform)}:${esc(r.channel)}<br><span class=mut>${esc((r.title||'').slice(0,60))}</span>`,r.viewers??'',`<span class=${cls(r.status)}>${esc(r.status)}</span>`]);
+ rows('clips',['#','title','status',''],d.clips,r=>[r.id,esc(r.title||r.stream_key)+(r.error?`<br><span class=err>${esc(r.error)}</span>`:''),`<span class=${cls(r.status)}>${esc(r.status)}</span>`,
+  r.has_video?`<a href="/media/${r.id}" target=_blank>view</a> <button onclick="republish(${r.id})">publish</button>`:'']);
+ rows('jobs',['clip','target','status','link'],d.jobs,r=>[r.clip_id,esc(r.target),`<span class=${cls(r.status)}>${esc(r.status)}</span>`+(r.error?`<br><span class=err>${esc(r.error)}</span>`:''),r.remote_url&&r.remote_url.startsWith('http')?`<a href="${esc(r.remote_url)}" target=_blank>open</a>`:'']);
+ rows('moments',['#','stream','t','score','status'],d.moments,r=>[r.id,esc(r.stream_key),r.t.toFixed(1),r.score.toFixed(2),esc(r.status)]);
+ rows('events',['time','source','message'],d.events,r=>[new Date(r.created_at*1000).toLocaleTimeString(),esc(r.source),`<span class=${r.level=='error'?'err':r.level=='warning'?'warn':''}>${esc(r.message)}</span>`]);
+}
+tick();setInterval(tick,3000);
+</script></body></html>
