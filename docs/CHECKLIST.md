@@ -1,5 +1,7 @@
 # Deployment checklist: 2 vCPU / 4 GB VPS, one authorized Twitch channel
 
+> **Optional alternative.** The primary setup is a local Windows PC: see [WINDOWS.md](WINDOWS.md).
+
 Full explanations are in [DEPLOY_VPS.md](DEPLOY_VPS.md).
 
 1. **Server:** Ubuntu 24.04, 2 vCPU / 4 GB / 40 GB, e.g. Hetzner CX23. SSH-key login only. Cloud

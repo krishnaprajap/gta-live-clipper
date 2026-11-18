@@ -29,8 +29,7 @@ def cleanup(db: DB, data_dir: Path, max_disk_gb: float, keep_clips_days: float, 
     if outbox.exists():
         for f in outbox.iterdir():
             if f.is_file() and (now - f.stat().st_mtime) / 86400 > keep_clips_days:
-                f.unlink()
-                removed += 1
+                removed += _unlink(f)
     # hard cap: delete oldest clip + outbox files until under quota
     cap = max_disk_gb * 1024 ** 3
     if dir_size(data_dir) > cap:
@@ -39,17 +38,21 @@ def cleanup(db: DB, data_dir: Path, max_disk_gb: float, keep_clips_days: float, 
         for f in victims:
             if dir_size(data_dir) <= cap:
                 break
-            f.unlink()
-            removed += 1
+            removed += _unlink(f)
     free_gb = shutil.disk_usage(data_dir).free / 1024 ** 3
     return {"removed_files": removed, "data_gb": round(dir_size(data_dir) / 1024 ** 3, 3), "free_gb": round(free_gb, 1)}
 
 
+def _unlink(p: Path) -> int:
+    """Delete a file; skip it if it is in use (Windows locks open files)."""
+    try:
+        p.unlink()
+        return 1
+    except FileNotFoundError:
+        return 0
+    except PermissionError:
+        return 0
+
+
 def _remove_files(row: dict) -> int:
-    n = 0
-    for k in ("raw_path", "vertical_path", "srt_path"):
-        p = row.get(k)
-        if p and Path(p).exists():
-            Path(p).unlink()
-            n += 1
-    return n
+    return sum(_unlink(Path(p)) for k in ("raw_path", "vertical_path", "srt_path") if (p := row.get(k)))

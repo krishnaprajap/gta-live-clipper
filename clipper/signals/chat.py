@@ -169,7 +169,7 @@ class ReplayChat:
     in real time, relative to when run() starts."""
 
     def __init__(self, path: str | Path, window: ChatWindow):
-        self.items = [json.loads(l) for l in Path(path).read_text().splitlines() if l.strip()]
+        self.items = [json.loads(l) for l in Path(path).read_text(encoding="utf-8-sig").splitlines() if l.strip()]
         self.window = window
         self.connected = True
         self.error = None

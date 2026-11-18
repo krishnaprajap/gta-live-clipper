@@ -20,5 +20,5 @@ class DryRunPublisher(Publisher):
     def publish(self, video: Path, meta: dict) -> PublishResult:
         dst = self.outbox / Path(video).name
         shutil.copy2(video, dst)
-        dst.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+        dst.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
         return PublishResult(True, "dry_run", remote_id=dst.name, remote_url=str(dst))

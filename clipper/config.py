@@ -23,12 +23,15 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
     """Minimal .env loader (does not override already-set env vars)."""
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+load_dotenv()  # at import, so binary paths in .env are visible to every module
 
 
 def secret(name: str) -> str | None:
@@ -65,6 +68,16 @@ class Config:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    @property
+    def max_streams(self) -> int:
+        """discovery.max_streams: an int, or "auto" (sized from CPU cores and RAM)."""
+        v = self.raw.get("discovery", {}).get("max_streams", 1)
+        if str(v).lower() == "auto":
+            from .system import auto_max_streams, hardware
+            hw = hardware()
+            return auto_max_streams(hw["logical_cores"], hw["ram_gb"], int(self.raw["discovery"].get("max_streams_cap", 6)))
+        return max(1, int(v))
+
     def authorized(self, platform: str, channel: str) -> bool:
         for c in self.raw.get("authorized_channels", []):
             if c.get("platform") == platform and str(c.get("channel", "")).lower() == channel.lower():
@@ -80,11 +93,11 @@ class Config:
 
 def load_config(path: str | Path | None = None, overrides: dict | None = None) -> Config:
     load_dotenv()
-    example = yaml.safe_load((ROOT / "config" / "config.example.yaml").read_text())
+    example = yaml.safe_load((ROOT / "config" / "config.example.yaml").read_text(encoding="utf-8-sig"))
     chosen = Path(path) if path else next((p for p in DEFAULT_PATHS if p.exists()), None)
     raw = example
     if chosen and chosen.exists() and chosen.name != "config.example.yaml":
-        raw = _merge(example, yaml.safe_load(chosen.read_text()) or {})
+        raw = _merge(example, yaml.safe_load(chosen.read_text(encoding="utf-8-sig")) or {})
     if overrides:
         raw = _merge(raw, overrides)
     return Config(raw=raw, path=chosen)

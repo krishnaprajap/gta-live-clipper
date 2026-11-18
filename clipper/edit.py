@@ -6,14 +6,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from .ffmpeg_utils import FFMPEG, has_audio, run
+from .system import caption_font, drawtext_font_arg, ffmpeg_filter_path
 
-CAPTION_STYLE = ("FontName=DejaVu Sans,FontSize=13,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+CAPTION_STYLE = (f"FontName={caption_font()},FontSize=13,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
                  "BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=60")
 
 
 def _esc_filter_path(p: Path) -> str:
-    # escape for use inside an ffmpeg filtergraph option value
-    return str(p.resolve()).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    return ffmpeg_filter_path(p)
 
 
 def _esc_text(s: str) -> str:
@@ -23,6 +23,7 @@ def _esc_text(s: str) -> str:
 def make_vertical(src: Path, dst: Path, srt: Path | None = None, credit: str | None = None,
                   width: int = 1080, height: int = 1920, crf: int = 23, preset: str = "veryfast",
                   max_duration: float = 59, zoom: float = 1.25, threads: int = 2) -> Path:
+    threads = max(1, int(threads))
     fg_w = int(width * zoom) // 2 * 2
     chain = [
         f"[0:v]split=2[bgsrc][fgsrc]",
@@ -33,7 +34,7 @@ def make_vertical(src: Path, dst: Path, srt: Path | None = None, credit: str | N
     ]
     last = "base"
     if credit:
-        chain.append(f"[{last}]drawtext=font='DejaVu Sans':text='{_esc_text(credit)}':fontcolor=white@0.9:"
+        chain.append(f"[{last}]drawtext={drawtext_font_arg()}:text='{_esc_text(credit)}':fontcolor=white@0.9:"
                      f"fontsize=38:box=1:boxcolor=black@0.45:boxborderw=14:x=(w-text_w)/2:y=170[cred]")
         last = "cred"
     if srt and Path(srt).exists() and Path(srt).stat().st_size > 0:

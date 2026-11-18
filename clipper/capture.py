@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .ffmpeg_utils import FFMPEG, run
+from .system import stop_process, streamlink_available, streamlink_cmd
 
 
 @dataclass
@@ -75,9 +76,9 @@ class RollingBuffer:
                                   stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             self._procs = [ff]
             return
-        if not shutil.which("streamlink"):
+        if not streamlink_available():
             raise RuntimeError("streamlink is not installed")
-        sl = subprocess.Popen(["streamlink", "--stdout", "--loglevel", "warning",
+        sl = subprocess.Popen([*streamlink_cmd(), "--stdout", "--loglevel", "warning",
                                "--hls-live-edge", "2",
                                self.source, self.quality], stdout=subprocess.PIPE, stderr=log)
         ff = subprocess.Popen(self._ffmpeg_segment_args(["-i", "pipe:0"]), stdin=sl.stdout, stdout=log, stderr=log)
@@ -90,8 +91,7 @@ class RollingBuffer:
 
     def stop(self) -> None:
         for p in self._procs:
-            if p.poll() is None:
-                p.send_signal(signal.SIGINT)
+            stop_process(p)
         for p in self._procs:
             try:
                 p.wait(timeout=10)
@@ -109,7 +109,7 @@ class RollingBuffer:
         """Return segments completed since the last call."""
         if not self.list_path.exists():
             return []
-        with open(self.list_path, newline="") as f:
+        with open(self.list_path, newline="", encoding="utf-8") as f:
             rows = list(csv.reader(f))
         new = []
         now = time.time()
@@ -161,7 +161,7 @@ class RollingBuffer:
             raise RuntimeError(f"no buffered segments cover {start:.1f}-{end:.1f}")
         out_path = Path(out_path)
         lst = out_path.with_suffix(".concat.txt")
-        lst.write_text("".join(f"file '{s.path.resolve()}'\n" for s in segs))
+        lst.write_text("".join(f"file '{s.path.resolve().as_posix()}'\n" for s in segs), encoding="utf-8")
         offset = max(0.0, start - segs[0].start)
         dur = min(end, segs[-1].end) - max(start, segs[0].start)
         run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),

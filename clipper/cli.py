@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 from .config import load_config, secret
 from .pipeline import Orchestrator, StreamSpec
@@ -35,11 +36,26 @@ def main(argv=None) -> None:
     sv = sub.add_parser("serve", help="dashboard + autonomous mode")
     sv.add_argument("--twitch", help="also start capturing this authorized Twitch channel immediately")
     sv.add_argument("--channel-id", default="")
+    sv.add_argument("--log-file", help="also log to this file (rotating, 3 x 10 MB)")
     sub.add_parser("doctor", help="check environment variables, binaries and config (prints no secret values)")
     sub.add_parser("cleanup")
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handlers: list[logging.Handler] = []
+    if not getattr(args, "log_file", None):
+        handlers.append(logging.StreamHandler())
+    else:  # file only: stderr is kept for crash tracebacks (captured by the Windows supervisor)
+        from logging.handlers import RotatingFileHandler
+        Path(args.log_file).parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(RotatingFileHandler(args.log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
     cfg = load_config(args.config)
+    if args.cmd in ("run", "serve"):
+        from .system import apply_resource_limits, set_app_priority
+        res = cfg.get("resources", {}) or {}
+        log = logging.getLogger("clipper")
+        log.info("process priority: %s", set_app_priority(res.get("process_priority", "below_normal")))
+        log.info("resource limits: %s", apply_resource_limits(res))
+        log.info("max simultaneous streams: %s", cfg.max_streams)
 
     if args.cmd == "run":
         if args.file:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
+from pathlib import Path
 
 from .config import Config, secret
 
@@ -53,10 +53,15 @@ def run_doctor(cfg: Config) -> int:
         bad += 1
 
     print("== binaries ==")
-    for b in ("ffmpeg", "ffprobe", "streamlink"):
-        path = shutil.which(b)
-        line("OK" if path else "FAIL", b, path or "not found")
-        bad += 0 if path else 1
+    from .ffmpeg_utils import FFMPEG, FFPROBE
+    from .system import hardware, streamlink_available
+    for b, path in (("ffmpeg", FFMPEG), ("ffprobe", FFPROBE)):
+        ok = bool(shutil.which(path) or Path(path).exists())
+        line("OK" if ok else "FAIL", b, path if ok else "not found (install FFmpeg or set FFMPEG_BINARY/FFPROBE_BINARY in .env)")
+        bad += 0 if ok else 1
+    sl = streamlink_available()
+    line("OK" if sl else "FAIL", "streamlink", "python module available" if sl else "pip install streamlink")
+    bad += 0 if sl else 1
     try:
         import ctranslate2
         import faster_whisper  # noqa: F401
@@ -74,15 +79,15 @@ def run_doctor(cfg: Config) -> int:
     line("OK", "publish.mode", cfg["publish"]["mode"])
     host = os.environ.get("DASHBOARD_HOST", cfg["dashboard"]["host"])
     in_docker = os.path.exists("/.dockerenv")
+    hw = hardware()
+    line("OK", "hardware", f"{hw['logical_cores']} logical cores, {hw['ram_gb']} GB RAM -> max_streams={cfg.max_streams}"
+         f" (config: {cfg['discovery'].get('max_streams')})")
+    line("OK", "data_dir", str(cfg.data_dir))
     exposed = host not in ("127.0.0.1", "localhost") and not in_docker
     line("WARN" if exposed else "OK", "dashboard bind", f"{host}" + (" (publicly reachable unless firewalled)" if exposed else ""))
     free = shutil.disk_usage(cfg.data_dir).free / 1024 ** 3
     need = cfg["storage"]["max_disk_gb"] + 2
     line("OK" if free >= need else "WARN", "disk free", f"{free:.1f} GB (storage.max_disk_gb={cfg['storage']['max_disk_gb']})")
-    try:
-        mem = int(open("/proc/meminfo").read().split()[1]) / 1024 ** 2
-        line("OK" if mem >= 3.5 else "WARN", "RAM", f"{mem:.1f} GB")
-    except OSError:
-        pass
+    line("OK" if hw["ram_gb"] >= 7.5 else "WARN", "RAM", f"{hw['ram_gb']} GB" + ("" if hw["ram_gb"] >= 7.5 else " (8 GB+ recommended on a desktop PC)"))
     print(f"== {'all required checks passed' if not bad else f'{bad} problem(s)'} ==")
     return 1 if bad else 0

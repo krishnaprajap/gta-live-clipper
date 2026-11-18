@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from ..config import Config, secret
 from ..pipeline import Orchestrator, StreamSpec
 
-HTML = (Path(__file__).parent / "index.html").read_text()
+HTML = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
 MIN_TOKEN_LEN = 20
 WEAK_TOKENS = {"change-me", "changeme", "password", "admin", "secret"}
 

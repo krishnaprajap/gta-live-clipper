@@ -1,0 +1,47 @@
+# Local Windows PC profile. setup.ps1 copies this to config/config.yaml and
+# fills in data_dir. Anything not set here comes from config.example.yaml.
+
+data_dir: 'C:/GTAClipper/data'      # all buffers, clips, outbox, DB, logs and Whisper models live here
+
+authorized_channels:
+  - platform: twitch
+    channel: CHANNEL_LOGIN_HERE     # lowercase Twitch login
+    authorized: false               # set true only with the creator's written permission
+    permission_note: "who/when/how permission was given"
+
+discovery:
+  max_streams: auto                 # sized from CPU cores + RAM (see `doctor`); or a number like 2
+  max_streams_cap: 4
+
+capture:
+  quality: "720p,720p30,480p,best"
+  buffer_s: 180
+  stall_timeout_s: 300
+
+transcription:
+  enabled: true
+  model: small                      # setup.ps1 picks "base" on PCs with < 8 GB RAM
+  compute_type: int8
+  cpu_threads: 2
+
+edit:
+  threads: 2                        # x264 threads per clip encode
+  preset: veryfast
+
+resources:
+  process_priority: below_normal    # keeps games/browser responsive; children inherit it
+  max_cpu_percent: 60               # hard cap for the whole app incl. ffmpeg (Windows Job Object)
+  max_memory_gb: auto               # 40% of RAM, 3-10 GB
+
+publish:
+  mode: dry_run                     # clips go to <data_dir>/outbox; change to youtube when ready
+
+storage:
+  max_disk_gb: 50                   # hard cap for data_dir; oldest clips are deleted first
+  min_free_gb: 10                   # stop extracting new clips if the drive gets this full
+  keep_clips_days: 7
+  keep_published_days: 2
+
+dashboard:
+  host: 127.0.0.1                   # localhost only
+  port: 8080

@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -67,7 +68,8 @@ class ClipProcessor:
         self.clips_dir = self.data_dir / "clips"
         self.clips_dir.mkdir(exist_ok=True)
         tcfg = cfg["transcription"]
-        self.transcriber = Transcriber(tcfg["model"], tcfg["compute_type"], tcfg.get("language")) if tcfg["enabled"] else None
+        self.transcriber = Transcriber(tcfg["model"], tcfg["compute_type"], tcfg.get("language"),
+                                       cpu_threads=int(tcfg.get("cpu_threads", 2))) if tcfg["enabled"] else None
         self.publisher = make_publisher(cfg, self.data_dir)
         # Clip work (transcode/transcribe) runs at lower CPU priority so live
         # capture + analysis never fall behind on a small VPS. On Linux the
@@ -132,7 +134,7 @@ class ClipProcessor:
             vertical = raw.with_name(raw.stem + "_vertical.mp4")
             make_vertical(raw, vertical, srt=srt, credit=f"{channel} • {platform.title()}", width=ecfg["width"],
                           height=ecfg["height"], crf=ecfg["crf"], preset=ecfg["preset"],
-                          max_duration=ecfg["max_duration_s"])
+                          max_duration=ecfg["max_duration_s"], threads=ecfg.get("threads", 2))
 
             stream = db.one("SELECT url FROM streams WHERE platform=? AND channel=?", (platform, channel)) or {}
             meta = generate_metadata(self.cfg, self.budget, channel, platform, transcript, signals,
@@ -285,6 +287,12 @@ class StreamWorker:
             if not force and head < p["peak"] + d["post_roll_s"]:
                 continue
             self.pending.remove(p)
+            min_free = float(self.cfg["storage"].get("min_free_gb", 0))
+            if min_free and shutil.disk_usage(self.cfg.data_dir).free / 1024 ** 3 < min_free:
+                self.db.update("moments", p["moment"], status="skipped", reason=f"free disk below {min_free} GB")
+                self.db.log("warning", "storage", f"moment {p['moment']} skipped: free disk below {min_free} GB")
+                self.buffer.unpin(p["pin"])
+                continue
             start = max(0.0, p["first"] - d["pre_roll_s"])
             end = min(p["peak"] + d["post_roll_s"], start + self.cfg["edit"]["max_duration_s"])
             raw = self.processor.clips_dir / f"{safe_name(self.spec.key)}_{int(time.time())}_{p['moment']}.mp4"
@@ -314,6 +322,9 @@ class Orchestrator:
         self.analysis_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis")
         self.workers: dict[str, tuple[StreamWorker, asyncio.Task]] = {}
         self.discovered: list[dict] = []
+
+    def _active_count(self) -> int:
+        return sum(1 for _, t in self.workers.values() if not t.done())
 
     def start_stream(self, spec: StreamSpec) -> StreamWorker:
         old = self.workers.get(spec.key)
@@ -352,7 +363,7 @@ class Orchestrator:
                     found += YouTubeAPI(secret("YOUTUBE_API_KEY")).live_streams("GTA 6", channel_ids=yt_ids)
                 except Exception as e:
                     self.db.log("error", "discovery.youtube", str(e))
-        return select(found, self.cfg, dcfg["max_streams"])
+        return select(found, self.cfg, self.cfg.max_streams)
 
     # -- Twitch watchdog: start/restart authorized channels as soon as they are live
     def _twitch_api(self):
@@ -400,7 +411,7 @@ class Orchestrator:
                     state["next"] = now + delay
                     self.db.log("warning", "twitch_watch", f"{key} interrupted; retry #{state['fails']} in {delay:.0f}s")
                 self.workers.pop(key)
-            if now < state["next"] or len(self.workers) >= self.cfg["discovery"]["max_streams"]:
+            if now < state["next"] or self._active_count() >= self.cfg.max_streams:
                 continue
             try:
                 self.start_stream(StreamSpec("twitch", s.channel, s.url, channel_id=s.channel_id))
@@ -440,7 +451,7 @@ class Orchestrator:
                                           status="live" if s.authorized else "discovered_unauthorized")
             for s in chosen:
                 key = f"{s.platform}:{s.channel}"
-                if key in self.workers or len(self.workers) >= dcfg["max_streams"]:
+                if key in self.workers or self._active_count() >= self.cfg.max_streams:
                     continue
                 spec = StreamSpec(s.platform, s.channel, s.url, channel_id=s.channel_id, live_chat_id=s.live_chat_id)
                 try:

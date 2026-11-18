@@ -38,5 +38,5 @@ for t in range(D):
             rnd.choice(["hi", "what mission is this", "nice car", "lol", "gg"])
         chat.append({"t": t + rnd.random(), "text": txt})
 chat_path = out.with_name("chat.jsonl")
-chat_path.write_text("\n".join(json.dumps(c, ensure_ascii=False) for c in chat))
+chat_path.write_text("\n".join(json.dumps(c, ensure_ascii=False) for c in chat), encoding="utf-8")
 print(out, chat_path)

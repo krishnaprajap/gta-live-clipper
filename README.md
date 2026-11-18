@@ -7,6 +7,11 @@ burned subtitles → metadata → publishing, with a small web dashboard.
 Everything heavy runs locally (FFmpeg, faster-whisper). No paid service is required;
 the only optional paid call (LLM metadata) is hard-capped by a spend ledger.
 
+**Runs on your own Windows PC: see [docs/WINDOWS.md](docs/WINDOWS.md)** (one setup script,
+autostart at logon, dashboard at http://127.0.0.1:8080, all data on a local drive of your choice).
+Linux/Docker and VPS deployment remain available as optional alternatives:
+[docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md), [docs/CHECKLIST.md](docs/CHECKLIST.md).
+
 ## Status (what is verified and what is not)
 
 | Component | Status |
@@ -138,8 +143,8 @@ live score sparkline for each stream to help with this.
 
 ## Cost and resources (₹8,000/month budget)
 
-**For the first real-world test (one stream), follow [docs/CHECKLIST.md](docs/CHECKLIST.md)** (short) or
-[docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md) (detailed).
+**Primary setup is a local Windows PC: [docs/WINDOWS.md](docs/WINDOWS.md)** (hardware-based stream
+limits, CPU/RAM caps, disk caps). The VPS numbers below remain as a reference for an optional server.
 It has measured numbers, the exact VPS spec and the step-by-step setup.
 
 Measured on a 4-vCPU container:

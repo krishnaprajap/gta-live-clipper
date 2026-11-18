@@ -9,3 +9,6 @@ config/config.yaml
 *.mp4
 *.ts
 .pytest_cache/
+.stop
+.clipper.pid
+.supervisor.pid

@@ -1,5 +1,7 @@
 # First real-world test: one stream on one VPS
 
+> **Optional alternative.** The primary setup is a local Windows PC: see [WINDOWS.md](WINDOWS.md).
+
 This guide sets up a **single authorized Twitch stream** on a small VPS in dry-run mode.
 Nothing is published: finished clips land in `data/outbox/` for you to review.
 

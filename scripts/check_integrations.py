@@ -77,11 +77,13 @@ def streamlink_capture(url):
     def fn():
         if not url:
             return "SKIP no URL"
-        if not shutil.which("streamlink"):
+        try:
+            import streamlink  # noqa: F401
+        except ImportError:
             raise RuntimeError("streamlink not installed")
         out = Path("data/check_capture.ts")
         out.parent.mkdir(exist_ok=True)
-        p = subprocess.Popen(["streamlink", "-o", str(out), "-f", url, "480p,worst"],
+        p = subprocess.Popen([sys.executable, "-m", "streamlink", "-o", str(out), "-f", url, "480p,worst"],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         time.sleep(15)
         p.terminate()
