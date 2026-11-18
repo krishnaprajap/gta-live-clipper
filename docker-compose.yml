@@ -1,16 +1,20 @@
 services:
   clipper:
     build: .
+    image: gta-clipper:latest
     restart: unless-stopped
-    env_file: .env                     # secrets stay on the host, never in the image
+    env_file: .env                       # secrets stay on the host (chmod 600), never baked into the image
+    command: ${CLIPPER_COMMAND:-serve}   # e.g. CLIPPER_COMMAND="serve --twitch <channel>"
     volumes:
       - ./data:/app/data
       - ./config/config.yaml:/app/config/config.yaml:ro
     ports:
-      - "127.0.0.1:8080:8080"          # expose via an SSH tunnel or a TLS reverse proxy
+      - "127.0.0.1:8080:8080"            # host-local only: use an SSH tunnel (see docs/DEPLOY_VPS.md)
     deploy:
       resources:
-        limits: {cpus: "3.5", memory: 6g}
+        limits:
+          cpus: "${CLIPPER_CPUS:-1.9}"   # leave headroom for the OS on a 2 vCPU box
+          memory: ${CLIPPER_MEMORY:-3g}
     logging:
       driver: json-file
       options: {max-size: "20m", max-file: "3"}

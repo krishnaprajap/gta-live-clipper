@@ -48,6 +48,15 @@ class StreamSpec:
         return f"{self.platform}:{self.channel}"
 
 
+def _lower_priority(nice: int = 10) -> None:
+    try:
+        import os
+        import threading
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), nice)
+    except (AttributeError, OSError):
+        pass
+
+
 class ClipProcessor:
     """CPU-heavy work runs on a single worker thread, so N streams never spawn
     N concurrent encodes. Capture/analysis keep running meanwhile."""
@@ -60,7 +69,10 @@ class ClipProcessor:
         tcfg = cfg["transcription"]
         self.transcriber = Transcriber(tcfg["model"], tcfg["compute_type"], tcfg.get("language")) if tcfg["enabled"] else None
         self.publisher = make_publisher(cfg, self.data_dir)
-        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipwork")
+        # Clip work (transcode/transcribe) runs at lower CPU priority so live
+        # capture + analysis never fall behind on a small VPS. On Linux the
+        # nice value is per-thread and inherited by spawned ffmpeg processes.
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipwork", initializer=_lower_priority)
 
     def uploads_today(self) -> int:
         since = time.time() - 86400

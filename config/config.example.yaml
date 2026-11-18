@@ -70,5 +70,5 @@ storage:
   keep_published_days: 1
 
 dashboard:
-  host: 0.0.0.0
+  host: 127.0.0.1   # never expose publicly; Docker sets DASHBOARD_HOST=0.0.0.0 inside the container
   port: 8080

@@ -16,7 +16,7 @@ button{background:#262a33;color:var(--fg);border:0;border-radius:6px;padding:3px
 input{background:#0f1115;color:var(--fg);border:1px solid #333;border-radius:6px;padding:4px 8px}
 </style></head><body>
 <header><h1>GTA VI Clipper</h1><span id="mode" class="pill"></span><span id="budget" class="pill"></span>
-<span style="flex:1"></span><input id="tok" type="password" placeholder="dashboard token" size="14"></header>
+</header>
 <main>
 <section><h2>Active captures</h2><div id="active" class="mut">none</div></section>
 <section><h2>Streams</h2><table id="streams"></table></section>
@@ -29,11 +29,9 @@ input{background:#0f1115;color:var(--fg);border:1px solid #333;border-radius:6px
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const cls=s=>/fail|error|reject/.test(s)?'err':/publish|dry_run|ready|capturing|ok/.test(s)?'ok':'warn';
-try{$('tok').value=localStorage.getItem('tok')||''}catch(e){}
-$('tok').onchange=()=>{try{localStorage.setItem('tok',$('tok').value)}catch(e){}};
 function rows(el,cols,data,fmt){$(el).innerHTML='<tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>'+
  data.map(r=>'<tr>'+fmt(r).map(v=>`<td>${v}</td>`).join('')+'</tr>').join('')}
-async function republish(id){const r=await fetch(`/api/clips/${id}/publish`,{method:'POST',headers:{'X-Token':$('tok').value}});alert(JSON.stringify(await r.json()))}
+async function republish(id){const r=await fetch(`/api/clips/${id}/publish`,{method:'POST'});alert(JSON.stringify(await r.json()))}
 async function tick(){
  const d=await (await fetch('/api/status')).json();
  $('mode').textContent='publish: '+d.publish_mode;

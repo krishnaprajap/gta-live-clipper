@@ -32,7 +32,10 @@ def main(argv=None) -> None:
     r.add_argument("--live-chat-id", default="")
     r.add_argument("--chat", help="JSONL chat replay for file mode")
     sub.add_parser("discover")
-    sub.add_parser("serve")
+    sv = sub.add_parser("serve", help="dashboard + autonomous mode")
+    sv.add_argument("--twitch", help="also start capturing this authorized Twitch channel immediately")
+    sv.add_argument("--channel-id", default="")
+    sub.add_parser("doctor", help="check environment variables, binaries and config (prints no secret values)")
     sub.add_parser("cleanup")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -69,7 +72,12 @@ def main(argv=None) -> None:
         print(f"selected for capture: {[s.channel for s in chosen]}")
     elif args.cmd == "serve":
         from .dashboard.app import serve
-        serve(cfg)
+        initial = [StreamSpec("twitch", args.twitch.lower(), f"https://www.twitch.tv/{args.twitch}",
+                              channel_id=args.channel_id)] if args.twitch else []
+        serve(cfg, initial)
+    elif args.cmd == "doctor":
+        from .doctor import run_doctor
+        raise SystemExit(run_doctor(cfg))
     elif args.cmd == "cleanup":
         from .storage import cleanup
         s = cfg["storage"]

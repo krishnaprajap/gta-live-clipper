@@ -24,13 +24,23 @@ def cleanup(db: DB, data_dir: Path, max_disk_gb: float, keep_clips_days: float, 
         if age_days > limit:
             removed += _remove_files(r)
             db.update("clips", r["id"], status=r["status"] if r["status"] == "published" else "expired")
-    # hard cap: delete oldest clip files until under quota
+    # outbox (dry-run / hand-off copies) follows the clip retention
+    outbox = data_dir / "outbox"
+    if outbox.exists():
+        for f in outbox.iterdir():
+            if f.is_file() and (now - f.stat().st_mtime) / 86400 > keep_clips_days:
+                f.unlink()
+                removed += 1
+    # hard cap: delete oldest clip + outbox files until under quota
     cap = max_disk_gb * 1024 ** 3
-    if clips_dir.exists():
-        for r in rows:
+    if dir_size(data_dir) > cap:
+        victims = sorted([f for d in (clips_dir, outbox) if d.exists() for f in d.iterdir() if f.is_file()],
+                         key=lambda f: f.stat().st_mtime)
+        for f in victims:
             if dir_size(data_dir) <= cap:
                 break
-            removed += _remove_files(r)
+            f.unlink()
+            removed += 1
     free_gb = shutil.disk_usage(data_dir).free / 1024 ** 3
     return {"removed_files": removed, "data_gb": round(dir_size(data_dir) / 1024 ** 3, 3), "free_gb": round(free_gb, 1)}
 

@@ -1,0 +1,30 @@
+# Profile for the first real-world test: ONE authorized stream on a
+# 2 vCPU / 4 GB VPS. Copy to config/config.yaml and edit the allowlist.
+# Values not listed here come from config.example.yaml.
+
+authorized_channels:
+  - platform: twitch
+    channel: CHANNEL_LOGIN_HERE          # lowercase Twitch login
+    authorized: false                    # set true only with the creator's written permission
+    permission_note: "who/when/how permission was given"
+
+discovery:
+  max_streams: 1
+
+capture:
+  quality: "720p,720p30,480p,best"       # prefer the 30 fps 720p transcode: ~half the bandwidth of 720p60
+  segment_s: 4
+  buffer_s: 180
+
+transcription:
+  enabled: true
+  model: small                           # if benchmark_whisper.py shows RTF > 1.5 on your VPS, use "base"
+  compute_type: int8
+
+publish:
+  mode: dry_run                          # first test: write to data/outbox only, publish nothing
+
+storage:
+  max_disk_gb: 15
+  keep_clips_days: 3
+  keep_published_days: 1

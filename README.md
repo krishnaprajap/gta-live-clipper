@@ -17,6 +17,8 @@ the only optional paid call (LLM metadata) is hard-capped by a spend ledger.
 | 9:16 vertical edit, credit line, burned captions, loudness normalisation | **Tested** (1080×1920 H.264/AAC output inspected) |
 | Template metadata (title, description with creator credit, tags) | **Tested** |
 | Dry-run publisher (outbox folder) + dashboard API | **Tested** |
+| Dashboard authentication (every route except `/healthz`) | **Tested** with unit tests and over real HTTP against the Docker container |
+| Docker image (Ubuntu 24.04, non-root, healthcheck) | **Built and run**: offline end-to-end test passed inside the container |
 | Twitch Helix discovery / Create Clip, YouTube discovery, YouTube resumable upload | **Tested against mocked HTTP only**. Run `scripts/check_integrations.py` on your server with real keys |
 | Twitch IRC chat, streamlink capture of real streams | **Not verified**: the build sandbox blocks twitch.tv. Verify with `scripts/check_integrations.py` |
 | faster-whisper transcription | **Not verified**: the sandbox blocks the model download from huggingface.co. The code falls back to no captions when the model can't load. SRT generation and burning were tested with hand-made word timings |
@@ -70,6 +72,17 @@ Autonomous mode with the dashboard on http://127.0.0.1:8080:
 python -m clipper serve
 ```
 
+Add `--twitch <channel>` to also start one authorized channel immediately.
+
+Every dashboard route needs HTTP Basic auth: any username, with `DASHBOARD_TOKEN` (at least 20
+random characters) as the password. The server refuses to start without a strong token.
+
+Pre-flight check (prints only set/unset for secrets):
+
+```bash
+python -m clipper doctor
+```
+
 Tests (about 2 minutes; includes a real-time end-to-end run):
 
 ```bash
@@ -96,7 +109,7 @@ set/unset.
 | `YOUTUBE_CLIENT_ID/SECRET` | uploads | Google Cloud → OAuth client (Desktop app) |
 | `YOUTUBE_REFRESH_TOKEN` | uploads | `python scripts/youtube_auth.py` |
 | `ANTHROPIC_API_KEY` | optional LLM metadata | console.anthropic.com |
-| `DASHBOARD_TOKEN` | dashboard actions (publish/start/stop) | any long random string |
+| `DASHBOARD_TOKEN` | dashboard login (all routes) | `openssl rand -hex 24` |
 
 Twitch chat is read anonymously (`justinfan` login), so it needs no token.
 
@@ -124,6 +137,9 @@ Tuning lives in `config/config.yaml`: `detection.threshold` (lower it for more c
 live score sparkline for each stream to help with this.
 
 ## Cost and resources (₹8,000/month budget)
+
+**For the first real-world test (one stream), follow [docs/DEPLOY_VPS.md](docs/DEPLOY_VPS.md).**
+It has measured numbers, the exact VPS spec and the step-by-step setup.
 
 Measured on a 4-vCPU container:
 
@@ -153,12 +169,13 @@ far less than ₹1 per clip. Set it to any model you prefer.
 ## Deployment
 
 ```bash
-cp config/config.example.yaml config/config.yaml   # edit allowlist + settings
+cp config/config.vps-1stream.yaml config/config.yaml   # edit allowlist + settings
 cp .env.example .env                               # add secrets; chmod 600 .env
 docker compose up -d --build
 ssh -L 8080:127.0.0.1:8080 user@server             # open http://127.0.0.1:8080
 ```
 
-The dashboard binds to localhost by default. To publish it, put it behind a TLS reverse proxy
-(Caddy or nginx) with authentication. Persistent state lives in `./data`: the SQLite DB, clips,
+The dashboard binds to localhost by default and always requires authentication. Reach it through
+an SSH tunnel. If you ever publish it, put it behind a TLS reverse proxy: Basic auth over plain
+HTTP is not safe on the open internet. Persistent state lives in `./data`: the SQLite DB, clips,
 outbox and the whisper model cache.
