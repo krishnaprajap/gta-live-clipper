@@ -22,6 +22,7 @@ from .pipeline import Orchestrator, StreamSpec
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="clipper")
     ap.add_argument("--config")
+    ap.add_argument("--data-dir", help="override data_dir (e.g. an isolated folder for verification runs)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="capture one stream until it ends (or Ctrl+C)")
     g = r.add_mutually_exclusive_group(required=True)
@@ -60,7 +61,7 @@ def main(argv=None) -> None:
         Path(args.log_file).parent.mkdir(parents=True, exist_ok=True)
         handlers.append(RotatingFileHandler(args.log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, overrides={"data_dir": args.data_dir} if args.data_dir else None)
     if args.cmd in ("run", "serve"):
         from .system import apply_resource_limits, set_app_priority
         res = cfg.get("resources", {}) or {}

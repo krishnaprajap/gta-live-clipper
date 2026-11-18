@@ -81,12 +81,16 @@ class ClipProcessor:
         return self.db.one("SELECT COUNT(*) AS n FROM publish_jobs WHERE status='published' AND created_at>=?",
                            (since,))["n"]
 
-    def is_duplicate(self, clip_id: int, stream_key: str, window: tuple[float, float], fp: str) -> str | None:
+    def is_duplicate(self, clip_id: int, stream_key: str, window: tuple[float, float], fp: str,
+                     session: str | None = None) -> str | None:
+        """Window overlap is only meaningful inside one capture session: capture
+        time restarts at 0 on every (re)connect. Across sessions, the visual
+        fingerprint catches real duplicates."""
         for r in self.db.query("SELECT c.id, c.stream_key, c.fingerprint, m.t, m.signals FROM clips c JOIN moments m "
                                "ON m.id=c.moment_id WHERE c.id!=? AND c.created_at>=? AND c.status NOT IN "
                                "('rejected','duplicate','failed')", (clip_id, time.time() - 6 * 3600)):
             sig = json.loads(r["signals"] or "{}")
-            if r["stream_key"] == stream_key and "window" in sig:
+            if r["stream_key"] == stream_key and "window" in sig and sig.get("session") == session:
                 if overlap_ratio(window, tuple(sig["window"])) > 0.5:
                     return f"overlaps clip {r['id']}"
             if fp and r["fingerprint"] and similarity(fp, r["fingerprint"]) > 0.9:
@@ -109,7 +113,8 @@ class ClipProcessor:
                 db.log("info", "quality", f"clip {clip_id} rejected: {q.reason}")
                 return {"status": "rejected", "reason": q.reason}
             fp = fingerprint(raw)
-            dup = self.is_duplicate(clip_id, clip["stream_key"], tuple(signals.get("window", (0, 0))), fp)
+            dup = self.is_duplicate(clip_id, clip["stream_key"], tuple(signals.get("window", (0, 0))), fp,
+                                    signals.get("session"))
             db.update("clips", clip_id, fingerprint=fp, duration=q.duration)
             if dup:
                 db.update("clips", clip_id, status="duplicate", error=dup)
@@ -316,6 +321,7 @@ class StreamWorker:
             self.buffer.unpin(p["pin"])
             sig = json.loads(self.db.one("SELECT signals FROM moments WHERE id=?", (p["moment"],))["signals"])
             sig["window"] = [start, end]
+            sig["session"] = self.buffer.out_dir.name  # unique per capture session
             self.db.execute("UPDATE moments SET status='extracted', signals=? WHERE id=?", (json.dumps(sig), p["moment"]))
             now = time.time()
             clip_id = self.db.execute("INSERT INTO clips(moment_id,stream_key,raw_path,status,created_at,updated_at) "

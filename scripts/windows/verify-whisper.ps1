@@ -57,8 +57,13 @@ $Video = Join-Path $TestDir "stream.mp4"
 if (-not (Test-Path $Video)) { & $Py scripts\make_test_stream.py --out $Video }
 $SpeechVideo = Join-Path $TestDir "stream_speech.mp4"
 & $Py scripts\add_speech.py --video $Video --speech $Wav --at 41 --out $SpeechVideo
-& $Py -m clipper run --file $SpeechVideo --chat (Join-Path $TestDir "chat.jsonl") --channel CaptionTest
-& $Py -m clipper whisper verify --latest-clip
+# Isolated, freshly wiped data folder: earlier test clips in your real database
+# (same footage, same capture times) would correctly be rejected as duplicates.
+# Duplicate detection stays fully enabled; the Whisper model (HF_HOME) is shared.
+$VerifyDir = Join-Path $DataDir "verify-captions"
+if (Test-Path $VerifyDir) { Remove-Item -Recurse -Force $VerifyDir }
+& $Py -m clipper --data-dir $VerifyDir run --file $SpeechVideo --chat (Join-Path $TestDir "chat.jsonl") --channel CaptionTest
+& $Py -m clipper --data-dir $VerifyDir whisper verify --latest-clip --expect-file $Txt
 if ($LASTEXITCODE -ne 0) { throw "Pipeline caption check FAILED." }
 Write-Host "`nWhisper verified: model complete, transcription correct, captions burned into the clip." -ForegroundColor Green
-Write-Host "Watch it: $(Join-Path $DataDir 'outbox')"
+Write-Host "Watch it: $(Join-Path $VerifyDir 'outbox')"
